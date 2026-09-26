@@ -4,16 +4,27 @@ import json
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from fyers_apiv3 import fyersModel
-from streamlit_autorefresh import st_autorefresh
 
 # Streamlit Page Config
 st.set_page_config(
     page_title="Nifty A+ Sniper Dashboard", page_icon="⚡", layout="wide"
 )
 
-# Auto-refresh every 3 minutes (180,000 milliseconds) for hands-free automation
-st_autorefresh(interval=180000, key="nifty_sniper_refresh")
+# Auto-refresh every 3 minutes (180,000 ms) natively without any external package error
+refresh_interval = 180000
+components.html(
+    f"""
+    <script>
+        setTimeout(function() {{
+            window.location.reload();
+        }}, {refresh_interval});
+    </script>
+""",
+    height=0,
+    width=0,
+)
 
 st.title("⚡ Nifty A+ Multi-Confirmation Sniper Dashboard")
 
@@ -144,10 +155,9 @@ fyers = fyersModel.FyersModel(
 )
 
 
-# Helper: Calculate Baselines (Intraday Baseline & Session Baseline) from History
+# Helper: Calculate Baselines (Intraday Live Baseline & Session PD Baseline)
 def get_baselines(symbol, resolution="3"):
   try:
-    # Get today's date range
     today = datetime.date.today()
     from_date = (today - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
     to_date = today.strftime("%Y-%m-%d")
@@ -168,10 +178,9 @@ def get_baselines(symbol, resolution="3"):
       df["datetime"] = pd.to_datetime(df["epoch"], unit="s")
       df["date"] = df["datetime"].dt.date
 
-      # Intraday Baseline (VWAP of Current Day)
+      # Intraday Baseline (Current Day)
       today_df = df[df["date"] == today]
       if not today_df.empty:
-        # Typical price * volume cumulative sum / cumulative volume
         tp = (
             (today_df["high"] + today_df["low"] + today_df["close"])
             / 3
@@ -189,7 +198,7 @@ def get_baselines(symbol, resolution="3"):
         intraday_baseline = 0
         current_price = 0
 
-      # Session Baseline (Previous Day VWAP / Close reference)
+      # Session Baseline (Previous Day)
       past_days = df[df["date"] < today]
       if not past_days.empty:
         last_date = past_days["date"].max()
@@ -216,7 +225,6 @@ def get_baselines(symbol, resolution="3"):
 # 3. Automatic Expiry & Strike Detection based on Nifty Open Price
 @st.cache_data(ttl=300)
 def get_dynamic_symbols():
-  # Fetch Nifty Spot Quote to get Open Price
   q_res = fyers.quotes(data={"symbols": "NSE:NIFTY50-INDEX"})
   open_price = 24700  # Fallback
   ltp_spot = 24700
@@ -227,14 +235,10 @@ def get_dynamic_symbols():
 
   atm_strike = int(round(open_price / 50) * 50)
 
-  # Determine current weekly expiry format (e.g., Nifty weekly expiry formatting)
-  # Fyers symbol format for current weekly expiry can be computed or queried.
-  # Using standard current month/week approximation or dynamic symbol builder:
   today = datetime.date.today()
-  # Find coming Thursday
   days_to_thu = (3 - today.weekday()) % 7
   expiry_date = today + datetime.timedelta(days=days_to_thu)
-  expiry_str = expiry_date.strftime("%y%b").upper()  # e.g., 26OCT or similar
+  expiry_str = expiry_date.strftime("%y%b").upper()
 
   ce_sym = f"NSE:NIFTY{expiry_str}{atm_strike}CE"
   pe_sym = f"NSE:NIFTY{expiry_str}{atm_strike}PE"
@@ -244,7 +248,8 @@ def get_dynamic_symbols():
 
 atm_strike, ce_symbol, pe_symbol, ltp_spot, open_price = get_dynamic_symbols()
 
-st.sidebar.subheader("🎯 Auto Detected Setup")
+st.sidebar.subheader("🎯 Auto-Detected Market Setup")
+st.sidebar.write(f"**Nifty Open Price:** {open_price}")
 st.sidebar.write(f"**ATM Strike:** {atm_strike}")
 st.sidebar.write(f"**CE Symbol:** {ce_symbol}")
 st.sidebar.write(f"**PE Symbol:** {pe_symbol}")
@@ -254,7 +259,6 @@ spot_price, spot_intra, spot_sess = get_baselines("NSE:NIFTY50-INDEX")
 ce_price, ce_intra, ce_sess = get_baselines(ce_symbol)
 pe_price, pe_intra, pe_sess = get_baselines(pe_symbol)
 
-# Fallback if live price is 0
 if spot_price == 0:
   spot_price = ltp_spot
 
@@ -294,15 +298,14 @@ col2.metric("ATM CE Strike", ce_symbol.split("NIFTY")[1], f"₹{ce_price}")
 col3.metric("ATM PE Strike", pe_symbol.split("NIFTY")[1], f"₹{pe_price}")
 
 st.markdown("---")
-st.subheader("📊 Multi-Confirmation Condition Status (3-Min Interval)")
+st.subheader("📊 Multi-Confirmation Condition Status (Auto 3-Min Refresh)")
 
-# Display Condition Matrix Table
 matrix_data = [
     {
         "Component": "Nifty Spot",
         "Price": spot_price,
-        "Session Baseline": round(spot_sess, 2),
-        "Intraday Baseline": round(spot_intra, 2),
+        "Session Baseline (PD)": round(spot_sess, 2),
+        "Intraday Baseline (Live)": round(spot_intra, 2),
         "Bullish Status": (
             "🟢 Above Both (A+ Bull Bias)"
             if a_plus_bull_bias
@@ -317,8 +320,8 @@ matrix_data = [
     {
         "Component": "CE Option",
         "Price": ce_price,
-        "Session Baseline": round(ce_sess, 2),
-        "Intraday Baseline": round(ce_intra, 2),
+        "Session Baseline (PD)": round(ce_sess, 2),
+        "Intraday Baseline (Live)": round(ce_intra, 2),
         "Bullish Status": (
             "🟢 A+ CE Buyer (Above Both)"
             if a_plus_ce_buyer
@@ -337,8 +340,8 @@ matrix_data = [
     {
         "Component": "PE Option",
         "Price": pe_price,
-        "Session Baseline": round(pe_sess, 2),
-        "Intraday Baseline": round(pe_intra, 2),
+        "Session Baseline (PD)": round(pe_sess, 2),
+        "Intraday Baseline (Live)": round(pe_intra, 2),
         "Bullish Status": (
             "🟢 A+ PE Seller (Below Both)"
             if a_plus_pe_seller
@@ -361,7 +364,6 @@ st.dataframe(pd.DataFrame(matrix_data), use_container_width=True)
 st.markdown("---")
 st.subheader("🚨 Final Trade Signals")
 
-# Final Trade Trigger Logic with Smart Wait (Top 5 lock + 6th wait handling)
 ce_buy_trade = a_plus_bull_bias and a_plus_pe_seller and a_plus_ce_buyer
 pe_buy_trade = a_plus_bear_bias and a_plus_ce_seller and a_plus_pe_buyer
 
@@ -375,11 +377,10 @@ with col_sig1:
         " Baselines (Strong Buyer)"
     )
   else:
-    # Check partial condition for smart waiting alert
     if a_plus_bull_bias and a_plus_pe_seller and ce_old_buyer:
       st.warning(
-          "⏳ **CE BUY: Top 5 Conditions Locked!** Waiting for 6th condition"
-          " (CE price above Intraday Baseline) on upcoming candles..."
+          "⏳ **CE BUY: Top 5 Conditions Locked!** Waiting patiently for 6th"
+          " condition (CE price above Intraday Baseline) on upcoming candles..."
       )
     else:
       st.info("⚪ CE Buy Trade: Waiting for market alignment...")
@@ -394,8 +395,8 @@ with col_sig2:
   else:
     if a_plus_bear_bias and a_plus_ce_seller and pe_old_buyer:
       st.warning(
-          "⏳ **PE BUY: Top 5 Conditions Locked!** Waiting for 6th condition"
-          " (PE price above Intraday Baseline) on upcoming candles..."
+          "⏳ **PE BUY: Top 5 Conditions Locked!** Waiting patiently for 6th"
+          " condition (PE price above Intraday Baseline) on upcoming candles..."
       )
     else:
       st.info("⚪ PE Buy Trade: Waiting for market alignment...")
