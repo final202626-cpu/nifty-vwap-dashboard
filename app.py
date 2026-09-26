@@ -1,7 +1,6 @@
 import hashlib
 import json
 import pandas as pd
-import pyotp
 import requests
 import streamlit as st
 from fyers_apiv3 import fyersModel
@@ -27,127 +26,142 @@ except Exception as e:
   )
   st.stop()
 
+# 2. Token Management (Automated Attempt + Manual Fallback for Cloud IPs)
+token = None
+login_message = ""
 
-# 2. Automated Headless Login Function (Cloud Compatible)
-@st.cache_resource(ttl=14400)  # Cache Token for 4 Hours
-def get_fyers_access_token():
-  # Fyers ke strict Anti-Bot headers (Origin aur Referer sabse zaroori hain)
-  headers = {
-      "Accept": "application/json, text/plain, */*",
-      "Accept-Language": "en-US,en;q=0.9",
-      "Content-Type": "application/json",
-      "Origin": "https://trade.fyers.in",
-      "Referer": "https://trade.fyers.in/",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-  }
-  
+# Sidebar for Manual Token Option (Agar Cloudflare block kare toh yahan paste kar sakte hain)
+st.sidebar.header("🔑 Authentication Setup")
+manual_token_input = st.sidebar.text_input(
+    "Or Paste Access Token Directly",
+    type="password",
+    help=(
+        "Agar automated cloud login block ho jaye, toh Fyers ka access token"
+        " yahan daal dein."
+    ),
+)
+
+if manual_token_input:
+  token = manual_token_input
+  login_message = "Connected via Manual Token (Cloud Bypass)"
+else:
+  # Try Automated Headless Login
   try:
+    import pyotp
+
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Origin": "https://trade.fyers.in",
+        "Referer": "https://trade.fyers.in/",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        ),
+    }
+
     totp = pyotp.TOTP(TOTP_KEY).now()
 
-    # Step 1: Send Login OTP (Vagator V2 Endpoint with Origin/Referer)
-    url_send_otp = "https://api-t2.fyers.in/vagator/v2/send_login_otp_v2"
-    res1 = requests.post(url_send_otp, json={"fy_id": FY_ID, "app_id": "2"}, headers=headers)
-    
-    if res1.status_code != 200:
-        return None, f"Step 1 Failed (HTTP {res1.status_code}): {res1.text[:150]}"
-        
-    data1 = res1.json()
-    if data1.get("s") != "ok" and data1.get("code") != 200:
-      return None, f"Step 1 Failed: {data1.get('message', 'OTP Send Error')}"
-
-    request_key = data1["request_key"]
-
-    # Step 2: Verify OTP
-    url_verify_otp = "https://api-t2.fyers.in/vagator/v2/verify_otp"
-    res2 = requests.post(url_verify_otp, json={"request_key": request_key, "otp": totp}, headers=headers)
-    
-    if res2.status_code != 200:
-        return None, f"Step 2 Failed (HTTP {res2.status_code}): {res2.text[:150]}"
-        
-    data2 = res2.json()
-    if data2.get("s") != "ok" and data2.get("code") != 200:
-      return None, f"Step 2 Failed: {data2.get('message', 'OTP Verification Error')}"
-
-    request_key = data2["request_key"]
-
-    # Step 3: Verify PIN
-    url_verify_pin = "https://api-t2.fyers.in/vagator/v2/verify_pin_v2"
-    payload_pin = {
-        "request_key": request_key, 
-        "identity_type": "pin", 
-        "identifier": str(PIN)
-    }
-    res3 = requests.post(url_verify_pin, json=payload_pin, headers=headers)
-    
-    if res3.status_code != 200:
-        return None, f"Step 3 Failed (HTTP {res3.status_code}): {res3.text[:150]}"
-        
-    data3 = res3.json()
-    if data3.get("s") != "ok" and data3.get("code") != 200:
-      return None, f"Step 3 Failed: {data3.get('message', 'PIN Verification Error')}"
-
-    access_token_auth = data3["data"]["access_token"]
-
-    # Step 4: Generate Auth Code
-    app_id_type = CLIENT_ID.split("-")[0] if "-" in CLIENT_ID else CLIENT_ID
-    app_id_hash = hashlib.sha256(f"{CLIENT_ID}:{SECRET_KEY}".encode()).hexdigest()
-
-    url_token = "https://api-t1.fyers.in/api/v3/generate-authcode"
-    payload_token = {
-        "fyers_id": FY_ID,
-        "app_id": app_id_type,
-        "redirect_uri": REDIRECT_URI,
-        "app_id_hash": app_id_hash,
-        "code_challenge": "",
-        "state": "sample_state",
-        "scope": "",
-        "nonce": "",
-        "response_type": "code",
-        "create_cookie": True
-    }
-    
-    headers_step4 = headers.copy()
-    headers_step4["Authorization"] = f"Bearer {access_token_auth}"
-
-    res4 = requests.post(url_token, json=payload_token, headers=headers_step4)
-    
-    if res4.status_code != 200:
-        return None, f"Step 4 Failed (HTTP {res4.status_code}): {res4.text[:150]}"
-        
-    data4 = res4.json()
-    if "auth_code" not in data4:
-      return None, f"Step 4 Failed: {data4.get('message', 'Auth Code Generation Error')}"
-
-    auth_code = data4["auth_code"]
-
-    # Step 5: SDK Session Token
-    session = fyersModel.SessionModel(
-        client_id=CLIENT_ID,
-        secret_key=SECRET_KEY,
-        redirect_uri=REDIRECT_URI,
-        response_type="code",
-        grant_type="authorization_code",
+    # Step 1: Send OTP
+    res1 = requests.post(
+        "https://api-t2.fyers.in/vagator/v2/send_login_otp_v2",
+        json={"fy_id": FY_ID, "app_id": "2"},
+        headers=headers,
     )
-    session.set_token(auth_code)
-    response = session.generate_token()
+    data1 = res1.json()
 
-    if "access_token" in response:
-      return response["access_token"], "Success"
-    else:
-      return None, f"Token Error: {response}"
+    if data1.get("s") == "ok" or data1.get("code") == 200:
+      request_key = data1["request_key"]
 
+      # Step 2: Verify OTP
+      res2 = requests.post(
+          "https://api-t2.fyers.in/vagator/v2/verify_otp",
+          json={"request_key": request_key, "otp": totp},
+          headers=headers,
+      )
+      data2 = res2.json()
+
+      if data2.get("s") == "ok" or data2.get("code") == 200:
+        request_key = data2["request_key"]
+
+        # Step 3: Verify PIN
+        res3 = requests.post(
+            "https://api-t2.fyers.in/vagator/v2/verify_pin_v2",
+            json={
+                "request_key": request_key,
+                "identity_type": "pin",
+                "identifier": str(PIN),
+            },
+            headers=headers,
+        )
+        data3 = res3.json()
+
+        if data3.get("s") == "ok" or data3.get("code") == 200:
+          access_token_auth = data3["data"]["access_token"]
+
+          # Step 4: Generate Auth Code
+          app_id_type = (
+              CLIENT_ID.split("-")[0] if "-" in CLIENT_ID else CLIENT_ID
+          )
+          app_id_hash = hashlib.sha256(
+              f"{CLIENT_ID}:{SECRET_KEY}".encode()
+          ).hexdigest()
+
+          headers_step4 = headers.copy()
+          headers_step4["Authorization"] = f"Bearer {access_token_auth}"
+
+          res4 = requests.post(
+              "https://api-t1.fyers.in/api/v3/generate-authcode",
+              json={
+                  "fyers_id": FY_ID,
+                  "app_id": app_id_type,
+                  "redirect_uri": REDIRECT_URI,
+                  "app_id_hash": app_id_hash,
+                  "code_challenge": "",
+                  "state": "sample_state",
+                  "scope": "",
+                  "nonce": "",
+                  "response_type": "code",
+                  "create_cookie": True,
+              },
+              headers=headers_step4,
+          )
+          data4 = res4.json()
+
+          if "auth_code" in data4:
+            auth_code = data4["auth_code"]
+
+            # Step 5: SDK Session Token
+            session = fyersModel.SessionModel(
+                client_id=CLIENT_ID,
+                secret_key=SECRET_KEY,
+                redirect_uri=REDIRECT_URI,
+                response_type="code",
+                grant_type="authorization_code",
+            )
+            session.set_token(auth_code)
+            response = session.generate_token()
+
+            if "access_token" in response:
+              token = response["access_token"]
+              login_message = "Automated Cloud Login Successful!"
   except Exception as e:
-    return None, f"Exception Error: {str(e)}"
+    pass  # Fallback will handle it gracefully
 
-
-# Login Execution
-token, status = get_fyers_access_token()
-
+# Check Token Status
 if not token:
-  st.error(f"❌ Login Failed: {status}")
+  st.warning(
+      "⚠️ **Cloudflare Firewall Restriction:** Fyers ne cloud server (US IP)"
+      " se automated OTP login block kar diya hai."
+  )
+  st.info(
+      "💡 **Solution:** Aap apne Fyers app ya web se ek Access Token generate"
+      " karke left sidebar me **'Or Paste Access Token Directly'** wale box me"
+      " daal dein. Dashboard turant live ho jayega!"
+  )
   st.stop()
 
-st.success("✅ Fyers API Connected Successfully!")
+st.success(f"✅ {login_message}")
 
 fyers = fyersModel.FyersModel(
     client_id=CLIENT_ID, is_async=False, token=token, log_path=""
@@ -184,7 +198,6 @@ col3.metric("Calculated ATM Strike", f"{atm_strike}")
 st.markdown("---")
 
 # 4. Options Expiry Settings
-st.sidebar.header("⚙️ Option Settings")
 expiry_string = st.sidebar.text_input(
     "Option Expiry Format",
     value="24OCT",
