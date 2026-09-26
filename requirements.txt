@@ -1,0 +1,5 @@
+streamlit
+fyers-apiv3
+pyotp
+requests
+pandas
