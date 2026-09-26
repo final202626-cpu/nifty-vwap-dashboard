@@ -31,16 +31,20 @@ except Exception as e:
 # 2. Automated Headless Login Function (Cloud Compatible)
 @st.cache_resource(ttl=14400)  # Cache Token for 4 Hours
 def get_fyers_access_token():
-  # Fyers ke naye anti-bot headers
+  # Fyers ke strict Anti-Bot headers (Origin aur Referer sabse zaroori hain)
   headers = {
-      "Accept": "application/json",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      "Accept": "application/json, text/plain, */*",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Content-Type": "application/json",
+      "Origin": "https://trade.fyers.in",
+      "Referer": "https://trade.fyers.in/",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
   }
   
   try:
     totp = pyotp.TOTP(TOTP_KEY).now()
 
-    # Step 1: Send Login OTP (Updated to Vagator V2 Endpoint)
+    # Step 1: Send Login OTP (Vagator V2 Endpoint with Origin/Referer)
     url_send_otp = "https://api-t2.fyers.in/vagator/v2/send_login_otp_v2"
     res1 = requests.post(url_send_otp, json={"fy_id": FY_ID, "app_id": "2"}, headers=headers)
     
@@ -53,7 +57,7 @@ def get_fyers_access_token():
 
     request_key = data1["request_key"]
 
-    # Step 2: Verify OTP (Updated Endpoint)
+    # Step 2: Verify OTP
     url_verify_otp = "https://api-t2.fyers.in/vagator/v2/verify_otp"
     res2 = requests.post(url_verify_otp, json={"request_key": request_key, "otp": totp}, headers=headers)
     
@@ -66,7 +70,7 @@ def get_fyers_access_token():
 
     request_key = data2["request_key"]
 
-    # Step 3: Verify PIN (Updated Endpoint)
+    # Step 3: Verify PIN
     url_verify_pin = "https://api-t2.fyers.in/vagator/v2/verify_pin_v2"
     payload_pin = {
         "request_key": request_key, 
@@ -102,7 +106,6 @@ def get_fyers_access_token():
         "create_cookie": True
     }
     
-    # Auth Bearer Token Pass Karna Zaroori Hai Step 4 Me
     headers_step4 = headers.copy()
     headers_step4["Authorization"] = f"Bearer {access_token_auth}"
 
