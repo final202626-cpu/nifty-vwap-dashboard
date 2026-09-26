@@ -15,12 +15,12 @@ st.title("📈 Nifty Live VWAP & Option Scanner (Fyers Cloud Mode)")
 
 # 1. Fetch Secrets from Streamlit
 try:
-  CLIENT_ID = st.secrets["7VPVG6SDK8-100"]  # Example: "XX12345-100"
-  SECRET_KEY = st.secrets["FWPRTCV2S2"]  # App Secret
-  REDIRECT_URI = st.secrets["https://127.0.0.1"]  # "https://127.0.0.1"
-  FY_ID = st.secrets["XS39623"]  # Your Fyers User ID (e.g. "XX12345")
-  PIN = st.secrets["2112"]  # Your 4 Digit User PIN
-  TOTP_KEY = st.secrets["NKFQBHN5K4RSNOM5LZP4NW7AJ23KSBAN"]  # 32 Character Secret TOTP Key
+  CLIENT_ID = st.secrets["FYERS_CLIENT_ID"]
+  SECRET_KEY = st.secrets["FYERS_SECRET_KEY"]
+  REDIRECT_URI = st.secrets["FYERS_REDIRECT_URI"]
+  FY_ID = st.secrets["FYERS_FY_ID"]
+  PIN = st.secrets["FYERS_PIN"]
+  TOTP_KEY = st.secrets["FYERS_TOTP_KEY"]
 except Exception as e:
   st.error(
       "⚠️ Secrets config missing! Please configure Streamlit Secrets in Settings."
@@ -121,7 +121,6 @@ token, status = get_fyers_access_token()
 
 if not token:
   st.error(f"❌ Login Failed: {status}")
-  st.info("💡 Secrets check karein: Client ID, Secret, PIN aur TOTP Key.")
   st.stop()
 
 st.success("✅ Fyers API Connected Successfully!")
