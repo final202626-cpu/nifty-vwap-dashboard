@@ -31,49 +31,61 @@ except Exception as e:
 # 2. Automated Headless Login Function (Cloud Compatible)
 @st.cache_resource(ttl=14400)  # Cache Token for 4 Hours
 def get_fyers_access_token():
+  # Adding Stealth Headers to bypass Fyers Cloudflare/WAF block on Streamlit IPs
+  headers = {
+      "Accept": "application/json",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  }
+  
   try:
     totp = pyotp.TOTP(TOTP_KEY).now()
 
     # Step 1: Send Login OTP
     url_send_otp = "https://api-t1.fyers.in/api/v3/send-login-otp"
-    res1 = requests.post(
-        url_send_otp, json={"fy_id": FY_ID, "app_id": "2"}
-    ).json()
-    if res1.get("s") != "ok":
-      return None, f"Step 1 Failed: {res1.get('message', 'OTP Send Error')}"
+    res1 = requests.post(url_send_otp, json={"fy_id": FY_ID, "app_id": "2"}, headers=headers)
+    try:
+        data1 = res1.json()
+    except:
+        return None, f"Fyers Firewall Blocked Request (Step 1). Server Response: {res1.text[:150]}"
+        
+    if data1.get("s") != "ok":
+      return None, f"Step 1 Failed: {data1.get('message', 'OTP Send Error')}"
 
-    request_key = res1["request_key"]
+    request_key = data1["request_key"]
 
     # Step 2: Verify OTP
     url_verify_otp = "https://api-t1.fyers.in/api/v3/verify-otp"
-    res2 = requests.post(
-        url_verify_otp, json={"request_key": request_key, "otp": totp}
-    ).json()
-    if res2.get("s") != "ok":
-      return None, f"Step 2 Failed: {res2.get('message', 'OTP Verification Error')}"
+    res2 = requests.post(url_verify_otp, json={"request_key": request_key, "otp": totp}, headers=headers)
+    try:
+        data2 = res2.json()
+    except:
+        return None, f"Fyers Firewall Blocked Request (Step 2). Server Response: {res2.text[:150]}"
+        
+    if data2.get("s") != "ok":
+      return None, f"Step 2 Failed: {data2.get('message', 'OTP Verification Error')}"
 
-    request_key = res2["request_key"]
+    request_key = data2["request_key"]
 
     # Step 3: Verify PIN
     url_verify_pin = "https://api-t1.fyers.in/api/v3/verify-pin"
     res3 = requests.post(
         url_verify_pin,
-        json={
-            "request_key": request_key,
-            "pin": str(PIN),
-            "identity_type": "pin",
-        },
-    ).json()
-    if res3.get("s") != "ok":
-      return None, f"Step 3 Failed: {res3.get('message', 'PIN Verification Error')}"
+        json={"request_key": request_key, "pin": str(PIN), "identity_type": "pin"},
+        headers=headers
+    )
+    try:
+        data3 = res3.json()
+    except:
+        return None, f"Fyers Firewall Blocked Request (Step 3). Server Response: {res3.text[:150]}"
+        
+    if data3.get("s") != "ok":
+      return None, f"Step 3 Failed: {data3.get('message', 'PIN Verification Error')}"
 
-    access_token_auth = res3["data"]["access_token"]
+    access_token_auth = data3["data"]["access_token"]
 
     # Step 4: Generate Auth Code
     app_id_type = CLIENT_ID.split("-")[0] if "-" in CLIENT_ID else CLIENT_ID
-    app_id_hash = hashlib.sha256(
-        f"{CLIENT_ID}:{SECRET_KEY}".encode()
-    ).hexdigest()
+    app_id_hash = hashlib.sha256(f"{CLIENT_ID}:{SECRET_KEY}".encode()).hexdigest()
 
     url_token = "https://api-t1.fyers.in/api/v3/generate-authcode"
     payload_token = {
@@ -84,17 +96,18 @@ def get_fyers_access_token():
         "code_challenge": "",
         "state": "sample_state",
     }
-    headers = {"Authorization": f"{FY_ID}:{access_token_auth}"}
+    headers["Authorization"] = f"{FY_ID}:{access_token_auth}"
 
-    res4 = requests.post(
-        url_token, json=payload_token, headers=headers
-    ).json()
-    if "auth_code" not in res4:
-      return None, (
-          f"Step 4 Failed: {res4.get('message', 'Auth Code Generation Error')}"
-      )
+    res4 = requests.post(url_token, json=payload_token, headers=headers)
+    try:
+        data4 = res4.json()
+    except:
+        return None, f"Fyers Firewall Blocked Request (Step 4). Server Response: {res4.text[:150]}"
+        
+    if "auth_code" not in data4:
+      return None, f"Step 4 Failed: {data4.get('message', 'Auth Code Generation Error')}"
 
-    auth_code = res4["auth_code"]
+    auth_code = data4["auth_code"]
 
     # Step 5: SDK Session Token
     session = fyersModel.SessionModel(
@@ -121,6 +134,7 @@ token, status = get_fyers_access_token()
 
 if not token:
   st.error(f"❌ Login Failed: {status}")
+  st.info("💡 Note: Agar 'Firewall Blocked' likha aa raha hai, iska matlab Fyers ne permanently Streamlit Cloud (US IPs) ko ban kar diya hai.")
   st.stop()
 
 st.success("✅ Fyers API Connected Successfully!")
