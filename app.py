@@ -30,7 +30,7 @@ except Exception as e:
     st.error("⚠️ Secrets config missing! Please configure CLIENT_ID and SECRET_KEY in Streamlit Secrets.")
     st.stop()
 
-# 2. MAIN SCREEN ACCESS TOKEN INPUT (No Sidebar Hassle!)
+# 2. MAIN SCREEN ACCESS TOKEN INPUT
 st.markdown("### 🔐 Fyers Authentication")
 access_token_input = st.text_input("Enter Fyers Access Token", type="password", placeholder="Yahan apna naya access token paste karo...")
 
@@ -53,8 +53,8 @@ components.html(
     width=0,
 )
 
-# 3. EXACT VWAP & PDVWAP CALCULATION ENGINE
-def get_vwap_baselines(symbol, resolution="3"):
+# 3. EXACT VWAP & PDVWAP CALCULATION ENGINE WITH CANDLE DATA FOR SL/TARGET
+def get_vwap_baselines_and_candle(symbol, resolution="3"):
     try:
         today = datetime.date.today()
         from_date = (today - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
@@ -75,7 +75,7 @@ def get_vwap_baselines(symbol, resolution="3"):
             df["date"] = df["datetime"].dt.date
             
             # --- Intraday Live VWAP (Current Day) ---
-            today_df = df[df["date"] == today]
+            today_df = df[df["date"] == today].reset_index(drop=True)
             if not today_df.empty:
                 tp = (today_df["high"] + today_df["low"] + today_df["close"]) / 3
                 cum_vol = today_df["volume"].cumsum()
@@ -83,8 +83,16 @@ def get_vwap_baselines(symbol, resolution="3"):
                 
                 intraday_vwap = (cum_tp_vol / cum_vol).iloc[-1] if cum_vol.iloc[-1] > 0 else today_df["close"].iloc[-1]
                 current_price = today_df["close"].iloc[-1]
+                
+                # Latest completed/active candle details for SL & Target
+                last_candle = today_df.iloc[-1]
+                c_open = last_candle["open"]
+                c_high = last_candle["high"]
+                c_low = last_candle["low"]
+                c_close = last_candle["close"]
             else:
                 intraday_vwap, current_price = 0, 0
+                c_open, c_high, c_low, c_close = 0, 0, 0, 0
 
             # --- Previous Day VWAP (PDVWAP) ---
             past_days = df[df["date"] < today]
@@ -100,10 +108,10 @@ def get_vwap_baselines(symbol, resolution="3"):
             else:
                 pdvwap = current_price
 
-            return current_price, intraday_vwap, pdvwap
+            return current_price, intraday_vwap, pdvwap, c_open, c_high, c_low, c_close
     except Exception as e:
         pass
-    return 0, 0, 0
+    return 0, 0, 0, 0, 0, 0, 0
 
 # 4. DYNAMIC OPEN PRICE & ATM STRIKE SELECTION
 @st.cache_data(ttl=300)
@@ -134,10 +142,10 @@ st.sidebar.write(f"**ATM Strike:** {atm_strike}")
 st.sidebar.write(f"**CE Symbol:** {ce_symbol.replace('NSE:', '')}")
 st.sidebar.write(f"**PE Symbol:** {pe_symbol.replace('NSE:', '')}")
 
-# 5. FETCH LIVE PRICES & BASELINES
-spot_price, spot_intra_vwap, spot_pdvwap = get_vwap_baselines("NSE:NIFTY50-INDEX")
-ce_price, ce_intra_vwap, ce_pdvwap = get_vwap_baselines(ce_symbol)
-pe_price, pe_intra_vwap, pe_pdvwap = get_vwap_baselines(pe_symbol)
+# 5. FETCH LIVE PRICES & BASELINES & CANDLE DATA
+spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _ = get_vwap_baselines_and_candle("NSE:NIFTY50-INDEX")
+ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close = get_vwap_baselines_and_candle(ce_symbol)
+pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close = get_vwap_baselines_and_candle(pe_symbol)
 
 if spot_price == 0:
     spot_price = ltp_spot
@@ -190,15 +198,33 @@ matrix_data = [
 st.dataframe(pd.DataFrame(matrix_data), use_container_width=True)
 
 st.markdown("---")
-st.subheader("🚨 Final Trade Signals")
+st.subheader("🚨 Final Trade Signals & Execution Levels (Entry, SL, Target)")
 
 ce_buy_trade = bull_bias and pe_strong_seller and ce_strong_buyer
 pe_buy_trade = bear_bias and ce_strong_seller and pe_strong_buyer
 
+# Calculations for CE Trade Levels
+ce_entry = ce_close
+ce_sl = round(ce_low - 1.0, 2)  # Candle Low with 1 rupee buffer
+ce_risk = ce_entry - ce_sl
+ce_target = round(ce_entry + (2 * ce_risk), 2)  # 1:2 Target
+
+# Calculations for PE Trade Levels
+pe_entry = pe_close
+pe_sl = round(pe_low - 1.0, 2)  # Candle Low with 1 rupee buffer
+pe_risk = pe_entry - pe_sl
+pe_target = round(pe_entry + (2 * pe_risk), 2)  # 1:2 Target
+
 col_sig1, col_sig2 = st.columns(2)
+
 with col_sig1:
     if ce_buy_trade:
-        st.success("🚀 **CE BUY TRADE TRIGGERED!**\n\n- Spot > Both Baselines\n- PE < Both Baselines (Strong Seller)\n- CE > Both Baselines (Strong Buyer)")
+        st.success("🚀 **CE BUY TRADE TRIGGERED!**")
+        st.markdown(f"""
+        - **Entry (Candle Close):** ₹{ce_entry}
+        - **Stop Loss (Low - Buffer):** ₹{ce_sl}
+        - **Target (1:2 Risk-Reward):** ₹{ce_target}
+        """)
     elif bull_bias and pe_strong_seller and (ce_price > ce_pdvwap):
         st.warning("⏳ **CE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (CE > Intraday VWAP)...")
     else:
@@ -206,7 +232,12 @@ with col_sig1:
 
 with col_sig2:
     if pe_buy_trade:
-        st.error("📉 **PE BUY TRADE TRIGGERED!**\n\n- Spot < Both Baselines\n- CE < Both Baselines (Strong Seller)\n- PE > Both Baselines (Strong Buyer)")
+        st.error("📉 **PE BUY TRADE TRIGGERED!**")
+        st.markdown(f"""
+        - **Entry (Candle Close):** ₹{pe_entry}
+        - **Stop Loss (Low - Buffer):** ₹{pe_sl}
+        - **Target (1:2 Risk-Reward):** ₹{pe_target}
+        """)
     elif bear_bias and ce_strong_seller and (pe_price > pe_pdvwap):
         st.warning("⏳ **PE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (PE > Intraday VWAP)...")
     else:
