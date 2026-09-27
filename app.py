@@ -30,27 +30,16 @@ except Exception as e:
     st.error("⚠️ Secrets config missing! Please configure CLIENT_ID and SECRET_KEY in Streamlit Secrets.")
     st.stop()
 
-# 2. MANUAL ACCESS TOKEN INPUT (Bypasses all Redirect Loops completely!)
+# 2. MANUAL ACCESS TOKEN INPUT
 st.sidebar.subheader("🔐 Fyers Authentication")
 access_token_input = st.sidebar.text_input("Enter Fyers Access Token", type="password")
 
 if not access_token_input:
-    st.warning("🔒 Please generate your Fyers Access Token (via API dashboard or script) and paste it in the sidebar to load the live dashboard.")
-    st.info("💡 Tip: Since Streamlit redirect loops are blocking the auto-login, pasting the token directly here is 100% stable for live trading!")
+    st.warning("🔒 Please generate your Fyers Access Token and paste it in the sidebar.")
     st.stop()
 
 token = access_token_input
 fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=token, log_path="")
-
-# Test token validity
-try:
-    test_res = fyers.quotes(data={"symbols": "NSE:NIFTY50-INDEX"})
-    if test_res.get("s") != "ok":
-        st.error("❌ Invalid or Expired Access Token! Please check your token.")
-        st.stop()
-except Exception as e:
-    st.error(f"❌ Token validation failed: {e}")
-    st.stop()
 
 # Auto-refresh every 3 minutes
 refresh_interval = 180000
@@ -217,8 +206,8 @@ with col_sig1:
 
 with col_sig2:
     if pe_buy_trade:
-        st.error("📉 **PE BUY TRADE TRIGGERED!**\n\n- Spot < Both Baselines\n- CE < Both Baselines (Strong Seller)\n- PE > Both Basellas (Strong Buyer)")
+        st.error("📉 **PE BUY TRADE TRIGGERED!**\n\n- Spot < Both Baselines\n- CE < Both Baselines (Strong Seller)\n- PE > Both Baselines (Strong Buyer)")
     elif bear_bias and ce_strong_seller and (pe_price > pe_pdvwap):
-        st.warning("⏳ **PE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (PE > Intraday VWAP)...")
+        st.warning("⏳ **PE BUY: Top S Conditions Locked!** Waiting for 6th condition (PE > Intraday VWAP)...")
     else:
         st.info("⚪ PE Buy Trade: Waiting for market alignment...")
