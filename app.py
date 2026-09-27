@@ -30,12 +30,12 @@ except Exception as e:
     st.error("⚠️ Secrets config missing! Please configure CLIENT_ID and SECRET_KEY in Streamlit Secrets.")
     st.stop()
 
-# 2. PERMANENT SIDEBAR TOKEN INPUT
-st.sidebar.subheader("🔐 Fyers Authentication")
-access_token_input = st.sidebar.text_input("Enter Fyers Access Token", type="password")
+# 2. MAIN SCREEN ACCESS TOKEN INPUT (No Sidebar Hassle!)
+st.markdown("### 🔐 Fyers Authentication")
+access_token_input = st.text_input("Enter Fyers Access Token", type="password", placeholder="Yahan apna naya access token paste karo...")
 
 if not access_token_input:
-    st.warning("🔒 Please enter your Fyers Access Token in the sidebar to load the live dashboard.")
+    st.warning("🔒 Please enter your Fyers Access Token above to unlock and load the live trading dashboard.")
     st.stop()
 
 token = access_token_input
