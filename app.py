@@ -1,5 +1,4 @@
 import datetime
-import hashlib
 import pandas as pd
 import requests
 import streamlit as st
@@ -21,64 +20,39 @@ footer {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# 1. FETCH SECRETS FROM STREAMLIT
+st.title("⚡ Nifty Multi-Confirmation Sniper Dashboard")
+
+# 1. FETCH SECRETS
 try:
     CLIENT_ID = st.secrets["FYERS_CLIENT_ID"]
     SECRET_KEY = st.secrets["FYERS_SECRET_KEY"]
-    REDIRECT_URI = st.secrets["FYERS_REDIRECT_URI"]
 except Exception as e:
-    st.error("⚠️ Secrets config missing! Please configure CLIENT_ID, SECRET_KEY, and REDIRECT_URI in Streamlit Settings.")
+    st.error("⚠️ Secrets config missing! Please configure CLIENT_ID and SECRET_KEY in Streamlit Secrets.")
     st.stop()
 
-# 2. OAUTH LOGIN & TOKEN MANAGEMENT
-if "fyers_access_token" not in st.session_state:
-    st.session_state.fyers_access_token = None
+# 2. MANUAL ACCESS TOKEN INPUT (Bypasses all Redirect Loops completely!)
+st.sidebar.subheader("🔐 Fyers Authentication")
+access_token_input = st.sidebar.text_input("Enter Fyers Access Token", type="password")
 
-# Extract auth_code from URL query params safely
-auth_code = None
+if not access_token_input:
+    st.warning("🔒 Please generate your Fyers Access Token (via API dashboard or script) and paste it in the sidebar to load the live dashboard.")
+    st.info("💡 Tip: Since Streamlit redirect loops are blocking the auto-login, pasting the token directly here is 100% stable for live trading!")
+    st.stop()
+
+token = access_token_input
+fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=token, log_path="")
+
+# Test token validity
 try:
-    auth_code = st.query_params.get("auth_code")
-except Exception:
-    pass
-
-if auth_code and not st.session_state.fyers_access_token:
-    session = fyersModel.SessionModel(
-        client_id=CLIENT_ID,
-        secret_key=SECRET_KEY,
-        redirect_uri=REDIRECT_URI,
-        response_type="code",
-        grant_type="authorization_code",
-    )
-    session.set_token(auth_code)
-    try:
-        response = session.generate_token()
-        if "access_token" in response:
-            st.session_state.fyers_access_token = response["access_token"]
-            # Clear query params immediately via JS to prevent Streamlit Cloud loop
-            st.markdown(
-                """
-                <script>
-                    window.history.replaceState({}, document.title, window.location.pathname);
-                </script>
-                """,
-                unsafe_allow_html=True
-            )
-    except Exception as e:
-        st.error(f"Login Failed: {e}")
-
-# If no active token, show 1-Click Login Button
-if not st.session_state.fyers_access_token:
-    st.title("⚡ Nifty Multi-Confirmation Sniper Dashboard")
-    st.warning("🔒 Session inactive. Click the button below to authenticate with Fyers.")
-    login_url = f"https://api-t1.fyers.in/api/v3/generate-authcode?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&state=dashboard"
-    
-    st.markdown(
-        f'<a href="{login_url}" target="_self"><button style="background-color:#FF5722; color:white; padding:14px 28px; border:none; border-radius:6px; font-size:16px; font-weight:bold; cursor:pointer;">Login with Fyers</button></a>',
-        unsafe_allow_html=True
-    )
+    test_res = fyers.quotes(data={"symbols": "NSE:NIFTY50-INDEX"})
+    if test_res.get("s") != "ok":
+        st.error("❌ Invalid or Expired Access Token! Please check your token.")
+        st.stop()
+except Exception as e:
+    st.error(f"❌ Token validation failed: {e}")
     st.stop()
 
-# Native JS Auto-refresh every 3 minutes (180,000 ms) AFTER successful login
+# Auto-refresh every 3 minutes
 refresh_interval = 180000
 components.html(
     f"""
@@ -89,11 +63,6 @@ components.html(
     height=0,
     width=0,
 )
-
-st.title("⚡ Nifty Multi-Confirmation Sniper Dashboard")
-
-token = st.session_state.fyers_access_token
-fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=token, log_path="")
 
 # 3. EXACT VWAP & PDVWAP CALCULATION ENGINE
 def get_vwap_baselines(symbol, resolution="3"):
@@ -165,7 +134,7 @@ def get_dynamic_symbols():
     expiry_str = expiry_date.strftime("%y%b").upper()
 
     ce_sym = f"NSE:NIFTY{expiry_str}{atm_strike}CE"
-    pe_sym = f"NSE:NIFTY{expiry_str}{atm_strike}PE"
+    pe_sym = f"NSE:NIFTS{expiry_str}{atm_strike}PE".replace("NIFTS", "NIFTY")
     return atm_strike, ce_sym, pe_sym, ltp_spot, open_price
 
 atm_strike, ce_symbol, pe_symbol, ltp_spot, open_price = get_dynamic_symbols()
@@ -218,7 +187,7 @@ matrix_data = [
         "Session Baseline (PDVWAP)": round(ce_pdvwap, 2),
         "Intraday Baseline (VWAP)": round(ce_intra_vwap, 2),
         "Bullish Status": "🟢 CE Strong Buyer" if ce_strong_buyer else ("🟡 Top 5 Met / Waiting 6th" if ce_price > ce_pdvwap else "⚪ Not Aligned"),
-        "BearishStatus": "🔴 CE Strong Seller" if ce_strong_seller else "⚪ Not Aligned",
+        "Bearish Status": "🔴 CE Strong Seller" if ce_strong_seller else "⚪ Not Aligned",
     },
     {
         "Component": "PE Option",
@@ -248,7 +217,7 @@ with col_sig1:
 
 with col_sig2:
     if pe_buy_trade:
-        st.error("📉 **PE BUY TRADE TRIGGERED!**\n\n- Spot < Both Baselines\n- CE < Both Baselines (Strong Seller)\n- PE > Both Baselines (Strong Buyer)")
+        st.error("📉 **PE BUY TRADE TRIGGERED!**\n\n- Spot < Both Baselines\n- CE < Both Baselines (Strong Seller)\n- PE > Both Basellas (Strong Buyer)")
     elif bear_bias and ce_strong_seller and (pe_price > pe_pdvwap):
         st.warning("⏳ **PE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (PE > Intraday VWAP)...")
     else:
