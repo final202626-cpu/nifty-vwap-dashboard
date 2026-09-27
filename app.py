@@ -9,7 +9,7 @@ from fyers_apiv3 import fyersModel
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Nifty Multi-Confirmation Sniper Dashboard", page_icon="⚡", layout="wide")
 
-# Hide Streamlit UI Elements (GitHub Icon, Header, Footer, Manage App Button)
+# Hide Streamlit UI Elements (GitHub Icon, Header, Footer)
 hide_streamlit_style = """
 <style>
 #MainMenu {visibility: hidden;}
@@ -44,19 +44,12 @@ except Exception as e:
     st.error("⚠️ Secrets config missing! Please configure CLIENT_ID, SECRET_KEY, and REDIRECT_URI in Streamlit Settings.")
     st.stop()
 
-# 2. SMART OAUTH LOGIN (NO MANUAL TOKEN COPY-PASTE)
+# 2. SMART OAUTH LOGIN (FIXED REDIRECT LOOP)
 if "fyers_access_token" not in st.session_state:
     st.session_state.fyers_access_token = None
 
-# Extract auth_code from URL query params after Fyers redirect
-auth_code = None
-try:
-    auth_code = st.query_params.get("auth_code")
-except Exception:
-    try:
-        auth_code = st.experimental_get_query_params().get("auth_code", [None])[0]
-    except Exception:
-        auth_code = None
+# Get auth_code from URL
+auth_code = st.query_params.get("auth_code")
 
 if auth_code and not st.session_state.fyers_access_token:
     session = fyersModel.SessionModel(
@@ -72,11 +65,8 @@ if auth_code and not st.session_state.fyers_access_token:
         if "access_token" in response:
             st.session_state.fyers_access_token = response["access_token"]
             st.success("✅ Logged in successfully!")
-            try:
-                st.query_params.clear()
-            except Exception:
-                pass
-            st.rerun()
+            # Remove auth_code from URL without forcing a hard reload loop
+            st.query_params.clear()
     except Exception as e:
         st.error(f"Login Failed: {e}")
 
@@ -96,10 +86,6 @@ fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=token, 
 
 # 3. EXACT VWAP & PDVWAP CALCULATION ENGINE
 def get_vwap_baselines(symbol, resolution="3"):
-    """
-    Calculates 100% Real Intraday VWAP & Previous Day VWAP (PDVWAP).
-    Formula: Cumulative((High + Low + Close)/3 * Volume) / Cumulative(Volume)
-    """
     try:
         today = datetime.date.today()
         from_date = (today - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
@@ -210,24 +196,24 @@ matrix_data = [
     {
         "Component": "Nifty Spot",
         "Price": spot_price,
-        "Session Baseline": round(spot_pdvwap, 2),
-        "Intraday Baseline (Live)": round(spot_intra_vwap, 2),
+        "Session Baseline (PDVWAP)": round(spot_pdvwap, 2),
+        "Intraday Baseline (VWAP)": round(spot_intra_vwap, 2),
         "Bullish Status": "🟢 Above Both (Bull Bias)" if bull_bias else "⚪ Waiting",
         "Bearish Status": "🔴 Below Both (Bear Bias)" if bear_bias else "⚪ Waiting",
     },
     {
         "Component": "CE Option",
         "Price": ce_price,
-        "Session Baseline": round(ce_pdvwap, 2),
-        "Intraday Baseline (Live)": round(ce_intra_vwap, 2),
+        "Session Baseline (PDVWAP)": round(ce_pdvwap, 2),
+        "Intraday Baseline (VWAP)": round(ce_intra_vwap, 2),
         "Bullish Status": "🟢 CE Strong Buyer" if ce_strong_buyer else ("🟡 Top 5 Met / Waiting 6th" if ce_price > ce_pdvwap else "⚪ Not Aligned"),
         "Bearish Status": "🔴 CE Strong Seller" if ce_strong_seller else "⚪ Not Aligned",
     },
     {
         "Component": "PE Option",
         "Price": pe_price,
-        "Session Baseline": round(pe_pdvwap, 2),
-        "Intraday Baseline (Live)": round(pe_intra_vwap, 2),
+        "Session Baseline (PDVWAP)": round(pe_pdvwap, 2),
+        "Intraday Baseline (VWAP)": round(pe_intra_vwap, 2),
         "Bullish Status": "🟢 PE Strong Seller" if pe_strong_seller else ("🟡 Top 5 Met / Waiting 6th" if pe_price < pe_pdvwap else "⚪ Not Aligned"),
         "Bearish Status": "🔴 PE Strong Buyer" if pe_strong_buyer else "⚪ Not Aligned",
     },
@@ -245,7 +231,7 @@ with col_sig1:
     if ce_buy_trade:
         st.success("🚀 **CE BUY TRADE TRIGGERED!**\n\n- Spot > Both Baselines\n- PE < Both Baselines (Strong Seller)\n- CE > Both Baselines (Strong Buyer)")
     elif bull_bias and pe_strong_seller and (ce_price > ce_pdvwap):
-        st.warning("⏳ **CE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (CE > Intraday Baseline)...")
+        st.warning("⏳ **CE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (CE > Intraday VWAP)...")
     else:
         st.info("⚪ CE Buy Trade: Waiting for market alignment...")
 
@@ -253,6 +239,6 @@ with col_sig2:
     if pe_buy_trade:
         st.error("📉 **PE BUY TRADE TRIGGERED!**\n\n- Spot < Both Baselines\n- CE < Both Baselines (Strong Seller)\n- PE > Both Baselines (Strong Buyer)")
     elif bear_bias and ce_strong_seller and (pe_price > pe_pdvwap):
-        st.warning("⏳ **PE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (PE > Intraday Baseline)...")
+        st.warning("⏳ **PE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (PE > Intraday VWAP)...")
     else:
         st.info("⚪ PE Buy Trade: Waiting for market alignment...")
