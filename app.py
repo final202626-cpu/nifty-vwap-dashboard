@@ -9,7 +9,7 @@ from fyers_apiv3 import fyersModel
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Nifty Multi-Confirmation Sniper Dashboard", page_icon="⚡", layout="wide")
 
-# Hide Streamlit UI Elements (GitHub Icon, Header, Footer)
+# Hide Streamlit UI Elements
 hide_streamlit_style = """
 <style>
 #MainMenu {visibility: hidden;}
@@ -21,7 +21,7 @@ footer {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Native JS Auto-refresh every 3 minutes (180,000 ms)
+# Auto-refresh every 3 minutes (180,000 ms)
 refresh_interval = 180000
 components.html(
     f"""
@@ -47,11 +47,14 @@ except Exception as e:
 # 2. SMART OAUTH LOGIN (FIXED REDIRECT LOOP)
 if "fyers_access_token" not in st.session_state:
     st.session_state.fyers_access_token = None
+if "auth_processed" not in st.session_state:
+    st.session_state.auth_processed = False
 
 # Get auth_code from URL
 auth_code = st.query_params.get("auth_code")
 
-if auth_code and not st.session_state.fyers_access_token:
+if auth_code and not st.session_state.fyers_access_token and not st.session_state.auth_processed:
+    st.session_state.auth_processed = True  # Stop loop instantly
     session = fyersModel.SessionModel(
         client_id=CLIENT_ID,
         secret_key=SECRET_KEY,
@@ -65,8 +68,7 @@ if auth_code and not st.session_state.fyers_access_token:
         if "access_token" in response:
             st.session_state.fyers_access_token = response["access_token"]
             st.success("✅ Logged in successfully!")
-            # Remove auth_code from URL without forcing a hard reload loop
-            st.query_params.clear()
+            # NO URL CLEARING OR RERUN HERE (To prevent browser redirect loop)
     except Exception as e:
         st.error(f"Login Failed: {e}")
 
@@ -149,8 +151,11 @@ def get_dynamic_symbols():
     atm_strike = int(round(open_price / 50) * 50)
     
     today = datetime.date.today()
-    days_to_thu = (3 - today.weekday()) % 7
-    expiry_date = today + datetime.timedelta(days=days_to_thu)
+    
+    # Nifty weekly expiry cycle starts on Wednesday morning as requested
+    # We find the upcoming Tuesday (expiry day)
+    days_to_tue = (1 - today.weekday()) % 7
+    expiry_date = today + datetime.timedelta(days=days_to_tue)
     expiry_str = expiry_date.strftime("%y%b").upper()
 
     ce_sym = f"NSE:NIFTY{expiry_str}{atm_strike}CE"
