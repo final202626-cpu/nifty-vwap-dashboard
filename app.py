@@ -30,12 +30,12 @@ except Exception as e:
     st.error("⚠️ Secrets config missing! Please configure CLIENT_ID and SECRET_KEY in Streamlit Secrets.")
     st.stop()
 
-# 2. MANUAL ACCESS TOKEN INPUT
+# 2. PERMANENT SIDEBAR TOKEN INPUT
 st.sidebar.subheader("🔐 Fyers Authentication")
 access_token_input = st.sidebar.text_input("Enter Fyers Access Token", type="password")
 
 if not access_token_input:
-    st.warning("🔒 Please generate your Fyers Access Token and paste it in the sidebar.")
+    st.warning("🔒 Please enter your Fyers Access Token in the sidebar to load the live dashboard.")
     st.stop()
 
 token = access_token_input
@@ -208,6 +208,6 @@ with col_sig2:
     if pe_buy_trade:
         st.error("📉 **PE BUY TRADE TRIGGERED!**\n\n- Spot < Both Baselines\n- CE < Both Baselines (Strong Seller)\n- PE > Both Baselines (Strong Buyer)")
     elif bear_bias and ce_strong_seller and (pe_price > pe_pdvwap):
-        st.warning("⏳ **PE BUY: Top S Conditions Locked!** Waiting for 6th condition (PE > Intraday VWAP)...")
+        st.warning("⏳ **PE BUY: Top 5 Conditions Locked!** Waiting for 6th condition (PE > Intraday VWAP)...")
     else:
         st.info("⚪ PE Buy Trade: Waiting for market alignment...")
