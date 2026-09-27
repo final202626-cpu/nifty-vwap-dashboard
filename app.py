@@ -21,20 +21,6 @@ footer {visibility: hidden;}
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# Auto-refresh every 3 minutes (180,000 ms)
-refresh_interval = 180000
-components.html(
-    f"""
-    <script>
-        setTimeout(function() {{ window.location.reload(); }}, {refresh_interval});
-    </script>
-    """,
-    height=0,
-    width=0,
-)
-
-st.title("⚡ Nifty Multi-Confirmation Sniper Dashboard")
-
 # 1. FETCH SECRETS FROM STREAMLIT
 try:
     CLIENT_ID = st.secrets["FYERS_CLIENT_ID"]
@@ -44,17 +30,18 @@ except Exception as e:
     st.error("⚠️ Secrets config missing! Please configure CLIENT_ID, SECRET_KEY, and REDIRECT_URI in Streamlit Settings.")
     st.stop()
 
-# 2. SMART OAUTH LOGIN (FIXED REDIRECT LOOP)
+# 2. OAUTH LOGIN & TOKEN MANAGEMENT
 if "fyers_access_token" not in st.session_state:
     st.session_state.fyers_access_token = None
-if "auth_processed" not in st.session_state:
-    st.session_state.auth_processed = False
 
-# Get auth_code from URL
-auth_code = st.query_params.get("auth_code")
+# Extract auth_code from URL query params safely
+auth_code = None
+try:
+    auth_code = st.query_params.get("auth_code")
+except Exception:
+    pass
 
-if auth_code and not st.session_state.fyers_access_token and not st.session_state.auth_processed:
-    st.session_state.auth_processed = True  # Stop loop instantly
+if auth_code and not st.session_state.fyers_access_token:
     session = fyersModel.SessionModel(
         client_id=CLIENT_ID,
         secret_key=SECRET_KEY,
@@ -67,21 +54,43 @@ if auth_code and not st.session_state.fyers_access_token and not st.session_stat
         response = session.generate_token()
         if "access_token" in response:
             st.session_state.fyers_access_token = response["access_token"]
-            st.success("✅ Logged in successfully!")
-            # NO URL CLEARING OR RERUN HERE (To prevent browser redirect loop)
+            # Clear query params immediately via JS to prevent Streamlit Cloud loop
+            st.markdown(
+                """
+                <script>
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                </script>
+                """,
+                unsafe_allow_html=True
+            )
     except Exception as e:
         st.error(f"Login Failed: {e}")
 
 # If no active token, show 1-Click Login Button
 if not st.session_state.fyers_access_token:
+    st.title("⚡ Nifty Multi-Confirmation Sniper Dashboard")
     st.warning("🔒 Session inactive. Click the button below to authenticate with Fyers.")
     login_url = f"https://api-t1.fyers.in/api/v3/generate-authcode?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&state=dashboard"
     
     st.markdown(
-        f'<a href="{login_url}" target="_self"><button style="background-color:#FF5722; color:white; padding:12px 24px; border:none; border-radius:6px; font-size:16px; font-weight:bold; cursor:pointer;">Login with Fyers</button></a>',
+        f'<a href="{login_url}" target="_self"><button style="background-color:#FF5722; color:white; padding:14px 28px; border:none; border-radius:6px; font-size:16px; font-weight:bold; cursor:pointer;">Login with Fyers</button></a>',
         unsafe_allow_html=True
     )
     st.stop()
+
+# Native JS Auto-refresh every 3 minutes (180,000 ms) AFTER successful login
+refresh_interval = 180000
+components.html(
+    f"""
+    <script>
+        setTimeout(function() {{ window.location.reload(); }}, {refresh_interval});
+    </script>
+    """,
+    height=0,
+    width=0,
+)
+
+st.title("⚡ Nifty Multi-Confirmation Sniper Dashboard")
 
 token = st.session_state.fyers_access_token
 fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=token, log_path="")
@@ -151,9 +160,6 @@ def get_dynamic_symbols():
     atm_strike = int(round(open_price / 50) * 50)
     
     today = datetime.date.today()
-    
-    # Nifty weekly expiry cycle starts on Wednesday morning as requested
-    # We find the upcoming Tuesday (expiry day)
     days_to_tue = (1 - today.weekday()) % 7
     expiry_date = today + datetime.timedelta(days=days_to_tue)
     expiry_str = expiry_date.strftime("%y%b").upper()
@@ -212,7 +218,7 @@ matrix_data = [
         "Session Baseline (PDVWAP)": round(ce_pdvwap, 2),
         "Intraday Baseline (VWAP)": round(ce_intra_vwap, 2),
         "Bullish Status": "🟢 CE Strong Buyer" if ce_strong_buyer else ("🟡 Top 5 Met / Waiting 6th" if ce_price > ce_pdvwap else "⚪ Not Aligned"),
-        "Bearish Status": "🔴 CE Strong Seller" if ce_strong_seller else "⚪ Not Aligned",
+        "BearishStatus": "🔴 CE Strong Seller" if ce_strong_seller else "⚪ Not Aligned",
     },
     {
         "Component": "PE Option",
