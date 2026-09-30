@@ -1,6 +1,5 @@
 import base64
 import datetime
-import time
 import pandas as pd
 import pyotp
 import requests
@@ -36,39 +35,41 @@ except Exception as e:
 # --- AUTOMATED FYERS LOGIN FUNCTION ---
 def get_auto_fyers_token():
     try:
-        # 1. TOTP Generation
-        totp = pyotp.TOTP(FYERS_TOTP_KEY).now()
+        # Clean TOTP Key (Remove spaces if any)
+        clean_totp_key = FYERS_TOTP_KEY.replace(" ", "").strip()
+        totp = pyotp.TOTP(clean_totp_key).now()
 
-        # 2. Validate FYERS ID
         headers = {"Content-Type": "application/json"}
+        
+        # 1. Validate FYERS ID
         payload_id = {"fy_id": base64.b64encode(FYERS_ID.encode()).decode(), "app_id": "2"}
-        res1 = requests.post("https://api-t1.fyers.in/api/v3/validate-id", json=payload_id, headers=headers).json()
+        res1 = requests.post("https://api-t1.fyers.in/api/v3/validate-id", json=payload_id, headers=headers, timeout=10).json()
         if res1.get("s") != "ok":
-            st.error(f"❌ FYERS ID Validation Failed: {res1}")
+            st.error(f"❌ Step 1 (Validate ID) Failed: {res1}")
             return None
         request_key = res1["request_key"]
 
-        # 3. Validate TOTP
+        # 2. Validate TOTP
         payload_totp = {"request_key": request_key, "totp": totp}
-        res2 = requests.post("https://api-t1.fyers.in/api/v3/validate-totp", json=payload_totp, headers=headers).json()
+        res2 = requests.post("https://api-t1.fyers.in/api/v3/validate-totp", json=payload_totp, headers=headers, timeout=10).json()
         if res2.get("s") != "ok":
-            st.error(f"❌ TOTP Validation Failed: {res2}")
+            st.error(f"❌ Step 2 (Validate TOTP) Failed: {res2}. (Check if FYERS_TOTP_KEY is correct)")
             return None
         request_key = res2["request_key"]
 
-        # 4. Validate PIN
+        # 3. Validate PIN
         payload_pin = {
             "request_key": request_key,
-            "pin": base64.b64encode(FYERS_PIN.encode()).decode(),
+            "pin": base64.b64encode(str(FYERS_PIN).encode()).decode(),
             "identity_type": "pin"
         }
-        res3 = requests.post("https://api-t1.fyers.in/api/v3/validate-pin", json=payload_pin, headers=headers).json()
+        res3 = requests.post("https://api-t1.fyers.in/api/v3/validate-pin", json=payload_pin, headers=headers, timeout=10).json()
         if res3.get("s") != "ok":
-            st.error(f"❌ PIN Validation Failed: {res3}")
+            st.error(f"❌ Step 3 (Validate PIN) Failed: {res3}. (Check if FYERS_PIN is correct)")
             return None
         token_internal = res3["data"]["access_token"]
 
-        # 5. Get Auth Code
+        # 4. Get Auth Code
         headers_auth = {"Authorization": f"{FYERS_ID}:{token_internal}", "Content-Type": "application/json"}
         payload_code = {
             "fyers_id": FYERS_ID,
@@ -77,13 +78,13 @@ def get_auto_fyers_token():
             "response_type": "code",
             "grant_type": "authorization_code"
         }
-        res4 = requests.post("https://api-t1.fyers.in/api/v3/token", json=payload_code, headers=headers_auth).json()
+        res4 = requests.post("https://api-t1.fyers.in/api/v3/token", json=payload_code, headers=headers_auth, timeout=10).json()
         auth_code = res4.get("auth_code")
         if not auth_code:
-            st.error(f"❌ Auth Code Generation Failed: {res4}")
+            st.error(f"❌ Step 4 (Auth Code Generation) Failed: {res4}")
             return None
 
-        # 6. Convert Auth Code to Access Token via SDK
+        # 5. Convert Auth Code to Access Token via SDK
         session = fyersModel.SessionModel(
             client_id=CLIENT_ID,
             secret_key=SECRET_KEY,
@@ -97,8 +98,12 @@ def get_auto_fyers_token():
         if response.get("s") == "ok":
             return response["access_token"]
         else:
-            st.error(f"❌ Token Conversion Failed: {response}")
+            st.error(f"❌ Step 5 (Token Conversion) Failed: {response}")
             return None
+
+    except requests.exceptions.Timeout:
+        st.error("🚨 Network Timeout: Fyers API server did not respond in 10 seconds.")
+        return None
     except Exception as e:
         st.error(f"🚨 Auto Login Exception: {e}")
         return None
@@ -109,11 +114,9 @@ if "fyers_token" not in st.session_state or st.session_state.fyers_token is None
         token = get_auto_fyers_token()
         if token:
             st.session_state.fyers_token = token
-            st.success("✅ Auto Login Successful! Dashboard Going LIVE...")
-            time.sleep(1)
+            st.success("✅ Auto Login Successful!")
             st.rerun()
         else:
-            st.error("❌ Auto Login Failed! Please check your Secrets configuration.")
             st.stop()
 
 # 2. INITIALIZE FYERS API
@@ -167,7 +170,7 @@ def get_vwap_baselines_and_candle(symbol, resolution="3"):
         pass
     return 0, 0, 0, 0, 0, 0, 0
 
-# 4. DYNAMIC OPEN PRICE
+# 4. DYNAMIC SYMBOLS
 def get_dynamic_symbols():
     q_res = fyers.quotes(data={"symbols": "NSE:NIFTY50-INDEX"})
     if q_res.get("s") != "ok":
@@ -202,7 +205,10 @@ st.sidebar.write(f"**ATM Strike:** {atm_strike}")
 st.sidebar.write(f"**CE Symbol:** {ce_symbol.replace('NSE:', '')}")
 st.sidebar.write(f"**PE Symbol:** {pe_symbol.replace('NSE:', '')}")
 
-# 5. FETCH LIVE/HISTORICAL PRICES
+if st.sidebar.button("🔄 Refresh Data Now"):
+    st.rerun()
+
+# 5. FETCH PRICES
 spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _ = get_vwap_baselines_and_candle("NSE:NIFTY50-INDEX")
 ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close = get_vwap_baselines_and_candle(ce_symbol)
 pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close = get_vwap_baselines_and_candle(pe_symbol)
@@ -255,6 +261,4 @@ with col_sig2:
     else:
         st.info("⚪ PE Buy Trade: Waiting...")
 
-st.write(f"🔄 Last Updated: {datetime.datetime.now().strftime('%H:%M:%S')}")
-time.sleep(180)
-st.rerun()
+st.caption(f"🔄 Dashboard Rendered At: {datetime.datetime.now().strftime('%H:%M:%S')}")
