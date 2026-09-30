@@ -30,7 +30,7 @@ try:
     FYERS_PIN = st.secrets["FYERS_PIN"]
     FYERS_TOTP_KEY = st.secrets["FYERS_TOTP_KEY"]
 except Exception as e:
-    st.error("⚠️ Secrets missing! Please configure FYERS_CLIENT_ID, SECRET_KEY, REDIRECT_URI, FYERS_ID, FYERS_PIN, and FYERS_TOTP_KEY in Secrets.")
+    st.error(f"⚠️ Secrets Missing Key Error: {e}")
     st.stop()
 
 # --- AUTOMATED FYERS LOGIN FUNCTION ---
