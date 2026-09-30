@@ -1,6 +1,9 @@
+import base64
 import datetime
 import time
 import pandas as pd
+import pyotp
+import requests
 import streamlit as st
 from fyers_apiv3 import fyersModel
 
@@ -23,57 +26,100 @@ try:
     CLIENT_ID = st.secrets["FYERS_CLIENT_ID"]
     SECRET_KEY = st.secrets["FYERS_SECRET_KEY"]
     REDIRECT_URI = st.secrets.get("FYERS_REDIRECT_URI", "")
+    FYERS_ID = st.secrets["FYERS_ID"]
+    FYERS_PIN = st.secrets["FYERS_PIN"]
+    FYERS_TOTP_KEY = st.secrets["FYERS_TOTP_KEY"]
 except Exception as e:
-    st.error("⚠️ Secrets config missing! Please configure CLIENT_ID, SECRET_KEY, and FYERS_REDIRECT_URI in Streamlit secrets.")
+    st.error("⚠️ Secrets missing! Please configure FYERS_CLIENT_ID, SECRET_KEY, REDIRECT_URI, FYERS_ID, FYERS_PIN, and FYERS_TOTP_KEY in Secrets.")
     st.stop()
 
-# --- SESSION STATE FOR TOKEN HANDLING ---
-if "fyers_token" not in st.session_state:
-    st.session_state.fyers_token = None
+# --- AUTOMATED FYERS LOGIN FUNCTION ---
+def get_auto_fyers_token():
+    try:
+        # 1. TOTP Generation
+        totp = pyotp.TOTP(FYERS_TOTP_KEY).now()
 
-# 2. MAIN SCREEN TOKEN INPUT & AUTO-CONVERTER (Hides once logged in)
-if st.session_state.fyers_token is None:
-    st.markdown("### 🔐 Fyers Authentication")
-    
-    with st.form("auth_form"):
-        st.warning("⚠️ Fyers auth code is single-use! Generate a NEW code from your URL and paste it immediately.")
-        access_token_input = st.text_input("Enter NEW Auth Code (from URL) OR Access Token", type="password", placeholder="Paste code here...")
-        submit_btn = st.form_submit_button("Start Dashboard")
-        
-        if submit_btn and access_token_input:
-            # Auto-Convert Short Auth Code
-            if len(access_token_input) < 100:  
-                st.info("🔄 Short Auth Code detected! Converting to Long Access Token...")
-                session = fyersModel.SessionModel(
-                    client_id=CLIENT_ID,
-                    secret_key=SECRET_KEY,
-                    redirect_uri=REDIRECT_URI,
-                    response_type="code",
-                    grant_type="authorization_code"
-                )
-                session.set_token(access_token_input)
-                response = session.generate_token()
-                
-                if response.get("s") == "ok":
-                    st.session_state.fyers_token = response["access_token"]
-                    st.success("✅ Token Generated Successfully! Dashboard is going LIVE...")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error(f"❌ Fyers Error: {response.get('message', response)}. (Bhai ekdum fresh URL generate kar aur wahan se naya code nikal ke daal!)")
-                    st.stop()
-            else:
-                # If user pastes the long token directly
-                st.session_state.fyers_token = access_token_input
-                st.success("✅ Long Access Token Applied! Dashboard is going LIVE...")
-                time.sleep(1)
-                st.rerun()
-    st.stop()
+        # 2. Validate FYERS ID
+        headers = {"Content-Type": "application/json"}
+        payload_id = {"fy_id": base64.b64encode(FYERS_ID.encode()).decode(), "app_id": "2"}
+        res1 = requests.post("https://api-t1.fyers.in/api/v3/validate-id", json=payload_id, headers=headers).json()
+        if res1.get("s") != "ok":
+            st.error(f"❌ FYERS ID Validation Failed: {res1}")
+            return None
+        request_key = res1["request_key"]
 
-# 3. INITIALIZE FYERS API WITH SAVED TOKEN
+        # 3. Validate TOTP
+        payload_totp = {"request_key": request_key, "totp": totp}
+        res2 = requests.post("https://api-t1.fyers.in/api/v3/validate-totp", json=payload_totp, headers=headers).json()
+        if res2.get("s") != "ok":
+            st.error(f"❌ TOTP Validation Failed: {res2}")
+            return None
+        request_key = res2["request_key"]
+
+        # 4. Validate PIN
+        payload_pin = {
+            "request_key": request_key,
+            "pin": base64.b64encode(FYERS_PIN.encode()).decode(),
+            "identity_type": "pin"
+        }
+        res3 = requests.post("https://api-t1.fyers.in/api/v3/validate-pin", json=payload_pin, headers=headers).json()
+        if res3.get("s") != "ok":
+            st.error(f"❌ PIN Validation Failed: {res3}")
+            return None
+        token_internal = res3["data"]["access_token"]
+
+        # 5. Get Auth Code
+        headers_auth = {"Authorization": f"{FYERS_ID}:{token_internal}", "Content-Type": "application/json"}
+        payload_code = {
+            "fyers_id": FYERS_ID,
+            "app_id": CLIENT_ID.split("-")[0] if "-" in CLIENT_ID else CLIENT_ID,
+            "redirect_uri": REDIRECT_URI,
+            "response_type": "code",
+            "grant_type": "authorization_code"
+        }
+        res4 = requests.post("https://api-t1.fyers.in/api/v3/token", json=payload_code, headers=headers_auth).json()
+        auth_code = res4.get("auth_code")
+        if not auth_code:
+            st.error(f"❌ Auth Code Generation Failed: {res4}")
+            return None
+
+        # 6. Convert Auth Code to Access Token via SDK
+        session = fyersModel.SessionModel(
+            client_id=CLIENT_ID,
+            secret_key=SECRET_KEY,
+            redirect_uri=REDIRECT_URI,
+            response_type="code",
+            grant_type="authorization_code"
+        )
+        session.set_token(auth_code)
+        response = session.generate_token()
+
+        if response.get("s") == "ok":
+            return response["access_token"]
+        else:
+            st.error(f"❌ Token Conversion Failed: {response}")
+            return None
+    except Exception as e:
+        st.error(f"🚨 Auto Login Exception: {e}")
+        return None
+
+# --- TOKEN SESSION MANAGEMENT ---
+if "fyers_token" not in st.session_state or st.session_state.fyers_token is None:
+    with st.spinner("🤖 Auto-Logging in to Fyers API... Please wait..."):
+        token = get_auto_fyers_token()
+        if token:
+            st.session_state.fyers_token = token
+            st.success("✅ Auto Login Successful! Dashboard Going LIVE...")
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.error("❌ Auto Login Failed! Please check your Secrets configuration.")
+            st.stop()
+
+# 2. INITIALIZE FYERS API
 fyers = fyersModel.FyersModel(client_id=CLIENT_ID, is_async=False, token=st.session_state.fyers_token, log_path="")
 
-# 4. EXACT VWAP ENGINE
+# 3. VWAP ENGINE
 def get_vwap_baselines_and_candle(symbol, resolution="3"):
     try:
         today = datetime.date.today()
@@ -121,12 +167,11 @@ def get_vwap_baselines_and_candle(symbol, resolution="3"):
         pass
     return 0, 0, 0, 0, 0, 0, 0
 
-# 5. DYNAMIC OPEN PRICE
+# 4. DYNAMIC OPEN PRICE
 def get_dynamic_symbols():
     q_res = fyers.quotes(data={"symbols": "NSE:NIFTY50-INDEX"})
     if q_res.get("s") != "ok":
         st.error(f"🚨 Fyers Quote API Error: {q_res.get('message', q_res)}")
-        # Token expire hone par session clear kar denge taaki wapas login page aaye
         if q_res.get("code") == -17:
             st.session_state.fyers_token = None
             st.rerun()
@@ -141,10 +186,6 @@ def get_dynamic_symbols():
     atm_strike = int(round(open_price / 50) * 50)
     today = datetime.date.today()
     
-    # Nifty weekly cycle begins Wednesday morning [Correction Rules Override]
-    days_to_tue = (today.weekday() - 1) % 7 # Logic adjusted for expiry mapping
-    
-    # Defaulting simple expiry generation for historical fallback
     days_to_expiry = (1 - today.weekday()) % 7
     expiry_date = today + datetime.timedelta(days=days_to_expiry)
     expiry_str = expiry_date.strftime("%y%b").upper()
@@ -161,7 +202,7 @@ st.sidebar.write(f"**ATM Strike:** {atm_strike}")
 st.sidebar.write(f"**CE Symbol:** {ce_symbol.replace('NSE:', '')}")
 st.sidebar.write(f"**PE Symbol:** {pe_symbol.replace('NSE:', '')}")
 
-# 6. FETCH LIVE/HISTORICAL PRICES
+# 5. FETCH LIVE/HISTORICAL PRICES
 spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _ = get_vwap_baselines_and_candle("NSE:NIFTY50-INDEX")
 ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close = get_vwap_baselines_and_candle(ce_symbol)
 pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close = get_vwap_baselines_and_candle(pe_symbol)
@@ -169,7 +210,7 @@ pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close = get_vwa
 if spot_price == 0:
     spot_price = ltp_spot
 
-# 7. CONDITIONS
+# 6. CONDITIONS
 bull_bias = (spot_price > spot_pdvwap) and (spot_price > spot_intra_vwap)
 bear_bias = (spot_price < spot_pdvwap) and (spot_price < spot_intra_vwap)
 
@@ -214,7 +255,6 @@ with col_sig2:
     else:
         st.info("⚪ PE Buy Trade: Waiting...")
 
-# Native Streamlit Auto-Refresh (Replaces JS reload)
 st.write(f"🔄 Last Updated: {datetime.datetime.now().strftime('%H:%M:%S')}")
-time.sleep(180)  # Wait 3 minutes
-st.rerun()       # Rerun app smoothly without losing token
+time.sleep(180)
+st.rerun()
