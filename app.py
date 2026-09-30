@@ -2,9 +2,13 @@ import datetime
 import pandas as pd
 import requests
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Nifty Multi-Confirmation Sniper Dashboard (Dhan)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Nifty Multi-Confirmation Sniper Dashboard", page_icon="⚡", layout="wide")
+
+# AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga
+st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
 
 hide_streamlit_style = """
 <style>
@@ -31,9 +35,9 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# --- 2. DHAN API HELPERS ---
+# --- 2. DHAN API DATA ENGINE ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
-    """Fetch intraday candles for VWAP & PDVWAP calculation"""
+    """Fetch intraday 3-min candles for VWAP & PDVWAP calculation"""
     try:
         today = datetime.date.today()
         from_date = (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
@@ -73,16 +77,15 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
             cum_vol = today_df["volume"].cumsum()
             cum_tp_vol = (tp * today_df["volume"]).cumsum()
             
-            # If volume is 0 (like index spot), fallback to simple price average
             intraday_vwap = (cum_tp_vol / cum_vol).iloc[-1] if cum_vol.iloc[-1] > 0 else today_df["close"].mean()
             current_price = today_df["close"].iloc[-1]
             last_candle = today_df.iloc[-1]
-            c_open, c_high, c_low, c_close = last_candle["open"], last_candle["high"], last_candle["low"], last_candle["close"]
+            c_open, c_high, c_low, c_close = last_candle["open"], last_candle["high"],last_candle["low"], last_candle["close"]
         else:
             current_price = df["close"].iloc[-1] if not df.empty else 0
             intraday_vwap, c_open, c_high, c_low, c_close = current_price, current_price, current_price, current_price, current_price
 
-        # Calculate Previous Day VWAP
+        # Calculate Previous Day VWAP (PDVWAP)
         past_days = df[df["date"] < today]
         if not past_days.empty:
             last_date = past_days["date"].max()
@@ -102,9 +105,8 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
 
 
 def get_atm_and_option_keys():
-    """Fetch Nifty 50 Index and detect ATM CE/PE Security IDs via Dhan Option Chain"""
+    """Fetch Nifty 50 Index and detect ATM CE/PE Security IDs dynamically"""
     try:
-        # 1. Fetch Option Chain for Nifty 50 (Security ID 13)
         url = "https://api.dhan.co/v2/optionchain"
         payload = {"UnderlyingScrip": 13, "UnderlyingSeg": "NSE_IDX"}
         res = requests.post(url, json=payload, headers=HEADERS, timeout=10).json()
@@ -131,20 +133,17 @@ def get_atm_and_option_keys():
         st.error(f"🚨 Option Chain Fetch Exception: {e}")
         st.stop()
 
-# --- 3. RUN DASHBOARD LOGIC ---
-with st.spinner("⚡ Fetching Live Market Data from Dhan API..."):
-    spot_ltp, atm_strike, ce_sec_id, pe_sec_id = get_atm_and_option_keys()
+# --- 3. EXECUTE DASHBOARD ENGINE ---
+spot_ltp, atm_strike, ce_sec_id, pe_sec_id = get_atm_and_option_keys()
 
-st.sidebar.subheader("🎯 Dhan Setup Info")
-st.sidebar.write(f"**Nifty Spot Price:** {spot_ltp}")
-st.sidebar.write(f"**ATM Strike:** {atm_strike}")
+st.sidebar.subheader("🎯 Dhan Auto-Engine Status")
+st.sidebar.write(f"**Nifty Spot Price:** ₹{spot_ltp}")
+st.sidebar.write(f"**Auto ATM Strike:** {atm_strike}")
 st.sidebar.write(f"**CE Security ID:** {ce_sec_id}")
 st.sidebar.write(f"**PE Security ID:** {pe_sec_id}")
+st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec")
 
-if st.sidebar.button("🔄 Refresh Data Now"):
-    st.rerun()
-
-# Fetch VWAP and Candle metrics for Spot, CE, PE
+# Fetch Calculations
 spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _ = get_dhan_history("13", "NSE_IDX", "INDEX")
 
 if ce_sec_id:
@@ -160,7 +159,7 @@ else:
 if spot_price == 0:
     spot_price = spot_ltp
 
-# --- 4. TRADING CONDITIONS ---
+# --- 4. TRADING LOGIC MATRIX ---
 bull_bias = (spot_price > spot_pdvwap) and (spot_price > spot_intra_vwap)
 bear_bias = (spot_price < spot_pdvwap) and (spot_price < spot_intra_vwap)
 
@@ -170,7 +169,7 @@ ce_strong_seller = (ce_price < ce_pdvwap) and (ce_price < ce_intra_vwap)
 pe_strong_buyer = (pe_price > pe_pdvwap) and (pe_price > pe_intra_vwap)
 pe_strong_seller = (pe_price < pe_pdvwap) and (pe_price < pe_intra_vwap)
 
-# --- 5. UI DISPLAY ---
+# --- 5. UI DISPLAY METRICS & TABLE ---
 col1, col2, col3 = st.columns(3)
 col1.metric("Nifty Spot Price", f"₹{spot_price}")
 col2.metric(f"ATM CE ({atm_strike})", f"₹{ce_price}")
@@ -185,7 +184,7 @@ matrix_data = [
 st.dataframe(pd.DataFrame(matrix_data), use_container_width=True)
 
 st.markdown("---")
-st.subheader("🚨 Final Trade Signals")
+st.subheader("🚨 Live A+ Multi-Confirmation Trade Signals")
 
 ce_buy_trade = bull_bias and pe_strong_seller and ce_strong_buyer
 pe_buy_trade = bear_bias and ce_strong_seller and pe_strong_buyer
@@ -194,15 +193,15 @@ col_sig1, col_sig2 = st.columns(2)
 with col_sig1:
     if ce_buy_trade:
         ce_risk = ce_close - (ce_low - 1)
-        st.success(f"🚀 **CE BUY TRIGGERED!**\n\nEntry: ₹{ce_close}\nSL: ₹{round(ce_low - 1, 2)}\nTarget: ₹{round(ce_close + (2 * ce_risk), 2)}")
+        st.success(f"🚀 **CE BUY TRIGGERED!**\n\n- **Entry:** ₹{ce_close}\n- **SL:** ₹{round(ce_low - 1, 2)}\n- **Target (1:2):** ₹{round(ce_close + (2 * ce_risk), 2)}")
     else:
-        st.info("⚪ CE Buy Trade: Waiting...")
+        st.info("⚪ CE Buy Trade: Conditions Not Met")
 
 with col_sig2:
     if pe_buy_trade:
         pe_risk = pe_close - (pe_low - 1)
-        st.error(f"📉 **PE BUY TRIGGERED!**\n\nEntry: ₹{pe_close}\nSL: ₹{round(pe_low - 1, 2)}\nTarget: ₹{round(pe_close + (2 * pe_risk), 2)}")
+        st.error(f"📉 **PE BUY TRIGGERED!**\n\n- **Entry:** ₹{pe_close}\n- **SL:** ₹{round(pe_low - 1, 2)}\n- **Target (1:2):** ₹{round(pe_close + (2 * ce_risk), 2)}")
     else:
-        st.info("⚪ PE Buy Trade: Waiting...")
+        st.info("⚪ PE Buy Trade: Conditions Not Met")
 
-st.caption(f"🔄 Last Rendered At: {datetime.datetime.now().strftime('%H:%M:%S')}")
+st.caption(f"🔄 Auto-Refreshed At: {datetime.datetime.now().strftime('%H:%M:%S')}")
