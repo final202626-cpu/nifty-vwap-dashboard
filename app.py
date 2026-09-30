@@ -35,7 +35,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# --- 2. DHAN API DATA ENGINE ---
+# --- 2. DHAN API HELPERS ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
     """Fetch intraday 3-min candles for VWAP & PDVWAP calculation"""
     try:
@@ -56,7 +56,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
         res = requests.post(url, json=payload, headers=HEADERS, timeout=10).json()
 
         if "start_Time" not in res or not res["start_Time"]:
-            return 0, 0, 0, 0, 0, 0, 0
+            return 0, 0, 0, 0, 0, 0, 0, 0
 
         df = pd.DataFrame({
             "epoch": res["start_Time"],
@@ -73,6 +73,9 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
         today_df = df[df["date"] == today].reset_index(drop=True)
         
         if not today_df.empty:
+            # Strictly extract Day Open Price (9:15 AM first candle open)
+            day_open_price = today_df["open"].iloc[0]
+            
             tp = (today_df["high"] + today_df["low"] + today_df["close"]) / 3
             cum_vol = today_df["volume"].cumsum()
             cum_tp_vol = (tp * today_df["volume"]).cumsum()
@@ -80,9 +83,10 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
             intraday_vwap = (cum_tp_vol / cum_vol).iloc[-1] if cum_vol.iloc[-1] > 0 else today_df["close"].mean()
             current_price = today_df["close"].iloc[-1]
             last_candle = today_df.iloc[-1]
-            c_open, c_high, c_low, c_close = last_candle["open"], last_candle["high"],last_candle["low"], last_candle["close"]
+            c_open, c_high, c_low, c_close = last_candle["open"], last_candle["high"], last_candle["low"], last_candle["close"]
         else:
             current_price = df["close"].iloc[-1] if not df.empty else 0
+            day_open_price = current_price
             intraday_vwap, c_open, c_high, c_low, c_close = current_price, current_price, current_price, current_price, current_price
 
         # Calculate Previous Day VWAP (PDVWAP)
@@ -97,15 +101,15 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
         else:
             pdvwap = current_price
 
-        return current_price, intraday_vwap, pdvwap, c_open, c_high, c_low, c_close
+        return current_price, intraday_vwap, pdvwap, c_open, c_high, c_low, c_close, day_open_price
 
     except Exception as e:
         st.error(f"🚨 Data Fetch Error for Security {security_id}: {e}")
-        return 0, 0, 0, 0, 0, 0, 0
+        return 0, 0, 0, 0, 0, 0, 0, 0
 
 
-def get_atm_and_option_keys():
-    """Fetch Nifty 50 Index and detect ATM CE/PE Security IDs dynamically"""
+def get_atm_option_keys(atm_strike):
+    """Fetch ATM CE and PE security IDs for the locked ATM strike from Dhan Option Chain"""
     try:
         url = "https://api.dhan.co/v2/optionchain"
         payload = {"UnderlyingScrip": 13, "UnderlyingSeg": "NSE_IDX"}
@@ -113,12 +117,9 @@ def get_atm_and_option_keys():
 
         if res.get("status") == "failure" or "data" not in res:
             st.error(f"🚨 Dhan Option Chain Error: {res.get('remarks', res)}")
-            st.stop()
+            return None, None
 
         oc_data = res["data"]
-        spot_price = oc_data.get("last_price", 24700)
-        atm_strike = int(round(spot_price / 50) * 50)
-
         oc_list = oc_data.get("oc", {})
         ce_sec_id, pe_sec_id = None, None
 
@@ -127,37 +128,41 @@ def get_atm_and_option_keys():
             ce_sec_id = strike_info.get("ce", {}).get("security_id")
             pe_sec_id = strike_info.get("pe", {}).get("security_id")
 
-        return spot_price, atm_strike, ce_sec_id, pe_sec_id
+        return ce_sec_id, pe_sec_id
 
     except Exception as e:
         st.error(f"🚨 Option Chain Fetch Exception: {e}")
-        st.stop()
+        return None, None
 
 # --- 3. EXECUTE DASHBOARD ENGINE ---
-spot_ltp, atm_strike, ce_sec_id, pe_sec_id = get_atm_and_option_keys()
+# Fetch Nifty Spot history to lock ATM Strike on Day Open Price
+spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price = get_dhan_history("13", "NSE_IDX", "INDEX")
 
-st.sidebar.subheader("🎯 Dhan Auto-Engine Status")
-st.sidebar.write(f"**Nifty Spot Price:** ₹{spot_ltp}")
-st.sidebar.write(f"**Auto ATM Strike:** {atm_strike}")
+# Strike selection locked strictly on 9:15 AM Open Price
+if spot_open_price > 0:
+    atm_strike = int(round(spot_open_price / 50) * 50)
+else:
+    atm_strike = 24700
+
+ce_sec_id, pe_sec_id = get_atm_option_keys(atm_strike)
+
+st.sidebar.subheader("🎯 Dhan Auto-Engine Setup")
+st.sidebar.write(f"**Nifty Day Open (9:15 AM):** ₹{spot_open_price}")
+st.sidebar.write(f"**Locked ATM Strike:** {atm_strike}")
 st.sidebar.write(f"**CE Security ID:** {ce_sec_id}")
 st.sidebar.write(f"**PE Security ID:** {pe_sec_id}")
 st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec")
 
-# Fetch Calculations
-spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _ = get_dhan_history("13", "NSE_IDX", "INDEX")
-
+# Fetch VWAP & Candle data for Locked ATM CE & PE
 if ce_sec_id:
-    ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close = get_dhan_history(ce_sec_id, "NSE_FNO", "OPTIDX")
+    ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close, _ = get_dhan_history(ce_sec_id, "NSE_FNO", "OPTIDX")
 else:
     ce_price = ce_intra_vwap = ce_pdvwap = ce_open = ce_high = ce_low = ce_close = 0
 
 if pe_sec_id:
-    pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close = get_dhan_history(pe_sec_id, "NSE_FNO", "OPTIDX")
+    pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close, _ = get_dhan_history(pe_sec_id, "NSE_FNO", "OPTIDX")
 else:
     pe_price = pe_intra_vwap = pe_pdvwap = pe_open = pe_high = pe_low = pe_close = 0
-
-if spot_price == 0:
-    spot_price = spot_ltp
 
 # --- 4. TRADING LOGIC MATRIX ---
 bull_bias = (spot_price > spot_pdvwap) and (spot_price > spot_intra_vwap)
@@ -171,9 +176,9 @@ pe_strong_seller = (pe_price < pe_pdvwap) and (pe_price < pe_intra_vwap)
 
 # --- 5. UI DISPLAY METRICS & TABLE ---
 col1, col2, col3 = st.columns(3)
-col1.metric("Nifty Spot Price", f"₹{spot_price}")
-col2.metric(f"ATM CE ({atm_strike})", f"₹{ce_price}")
-col3.metric(f"ATM PE ({atm_strike})", f"₹{pe_price}")
+col1.metric("Nifty Spot Price", f"₹{spot_price}", f"Day Open: {spot_open_price}")
+col2.metric(f"Locked ATM CE ({atm_strike})", f"₹{ce_price}")
+col3.metric(f"Locked ATM PE ({atm_strike})", f"₹{pe_price}")
 
 st.markdown("---")
 matrix_data = [
@@ -193,14 +198,14 @@ col_sig1, col_sig2 = st.columns(2)
 with col_sig1:
     if ce_buy_trade:
         ce_risk = ce_close - (ce_low - 1)
-        st.success(f"🚀 **CE BUY TRIGGERED!**\n\n- **Entry:** ₹{ce_close}\n- **SL:** ₹{round(ce_low - 1, 2)}\n- **Target (1:2):** ₹{round(ce_close + (2 * ce_risk), 2)}")
+        st.success(f"🚀 **CE BUY TRIGGERED!**\n\n- **Entry:** ₹{ce_close}\n- **SL:** ₹{round(ce_low - 1, 2)}\n- **Target:** ₹{round(ce_close + (2 * ce_risk), 2)}")
     else:
         st.info("⚪ CE Buy Trade: Conditions Not Met")
 
 with col_sig2:
     if pe_buy_trade:
         pe_risk = pe_close - (pe_low - 1)
-        st.error(f"📉 **PE BUY TRIGGERED!**\n\n- **Entry:** ₹{pe_close}\n- **SL:** ₹{round(pe_low - 1, 2)}\n- **Target (1:2):** ₹{round(pe_close + (2 * ce_risk), 2)}")
+        st.error(f"📉 **PE BUY TRIGGERED!**\n\n- **Entry:** ₹{pe_close}\n- **SL:** ₹{round(pe_low - 1, 2)}\n- **Target:** ₹{round(pe_close + (2 * pe_risk), 2)}")
     else:
         st.info("⚪ PE Buy Trade: Conditions Not Met")
 
