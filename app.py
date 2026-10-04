@@ -1,4 +1,5 @@
 import datetime
+import pytz
 import pandas as pd
 import requests
 import streamlit as st
@@ -35,13 +36,17 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+# TIMEZONE SETUP: Strictly Indian Standard Time (IST) lock
+IST = pytz.timezone('Asia/Kolkata')
+
 # --- 2. DHAN API HELPERS ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
     """Fetch intraday 3-min candles for VWAP & PDVWAP calculation"""
     try:
-        today = datetime.date.today()
-        from_date = (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
-        to_date = today.strftime("%Y-%m-%d")
+        # Hamesha IST ke hisab se 'today' nikalega
+        today_date = datetime.datetime.now(IST).date()
+        from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        to_date = today_date.strftime("%Y-%m-%d")
 
         payload = {
             "securityId": str(security_id),
@@ -67,10 +72,12 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
             "volume": res.get("volume", [0] * len(res["close"]))
         })
 
+        # Epoch ko IST datetime me convert karke date extract karna
         df["datetime"] = pd.to_datetime(df["epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
         df["date"] = df["datetime"].dt.date
 
-        today_df = df[df["date"] == today].reset_index(drop=True)
+        # Filter strictly for today in IST
+        today_df = df[df["date"] == today_date].reset_index(drop=True)
         
         if not today_df.empty:
             # Strictly extract Day Open Price (9:15 AM first candle open)
@@ -90,7 +97,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
             intraday_vwap, c_open, c_high, c_low, c_close = current_price, current_price, current_price, current_price, current_price
 
         # Calculate Previous Day VWAP (PDVWAP)
-        past_days = df[df["date"] < today]
+        past_days = df[df["date"] < today_date]
         if not past_days.empty:
             last_date = past_days["date"].max()
             last_day_df = past_days[past_days["date"] == last_date]
@@ -106,7 +113,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
     except Exception as e:
         st.error(f"🚨 Data Fetch Error for Security {security_id}: {e}")
         return 0, 0, 0, 0, 0, 0, 0, 0
-
 
 def get_atm_option_keys(atm_strike):
     """Fetch ATM CE and PE security IDs for the locked ATM strike from Dhan Option Chain"""
@@ -135,7 +141,6 @@ def get_atm_option_keys(atm_strike):
         return None, None
 
 # --- 3. EXECUTE DASHBOARD ENGINE ---
-# Fetch Nifty Spot history to lock ATM Strike on Day Open Price
 spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price = get_dhan_history("13", "NSE_IDX", "INDEX")
 
 # Strike selection locked strictly on 9:15 AM Open Price
@@ -147,13 +152,12 @@ else:
 ce_sec_id, pe_sec_id = get_atm_option_keys(atm_strike)
 
 st.sidebar.subheader("🎯 Dhan Auto-Engine Setup")
-st.sidebar.write(f"**Nifty Day Open (9:15 AM):** ₹{spot_open_price}")
+st.sidebar.write(f"**Nifty Day Open:** ₹{spot_open_price}")
 st.sidebar.write(f"**Locked ATM Strike:** {atm_strike}")
 st.sidebar.write(f"**CE Security ID:** {ce_sec_id}")
 st.sidebar.write(f"**PE Security ID:** {pe_sec_id}")
-st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec")
+st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec (IST)")
 
-# Fetch VWAP & Candle data for Locked ATM CE & PE
 if ce_sec_id:
     ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close, _ = get_dhan_history(ce_sec_id, "NSE_FNO", "OPTIDX")
 else:
@@ -194,19 +198,28 @@ st.subheader("🚨 Live A+ Multi-Confirmation Trade Signals")
 ce_buy_trade = bull_bias and pe_strong_seller and ce_strong_buyer
 pe_buy_trade = bear_bias and ce_strong_seller and pe_strong_buyer
 
+# Buffer set to 2 points as requested for SL
+BUFFER = 2.0
+
 col_sig1, col_sig2 = st.columns(2)
 with col_sig1:
     if ce_buy_trade:
-        ce_risk = ce_close - (ce_low - 1)
-        st.success(f"🚀 **CE BUY TRIGGERED!**\n\n- **Entry:** ₹{ce_close}\n- **SL:** ₹{round(ce_low - 1, 2)}\n- **Target:** ₹{round(ce_close + (2 * ce_risk), 2)}")
+        ce_entry = ce_close
+        ce_sl = ce_low - BUFFER
+        ce_risk = ce_entry - ce_sl
+        ce_target = ce_entry + (2 * ce_risk)
+        st.success(f"🚀 **CE BUY TRIGGERED!**\n\n- **Entry (Close):** ₹{round(ce_entry, 2)}\n- **SL (Low - 2pts):** ₹{round(ce_sl, 2)}\n- **Target (1:2):** ₹{round(ce_target, 2)}")
     else:
         st.info("⚪ CE Buy Trade: Conditions Not Met")
 
 with col_sig2:
     if pe_buy_trade:
-        pe_risk = pe_close - (pe_low - 1)
-        st.error(f"📉 **PE BUY TRIGGERED!**\n\n- **Entry:** ₹{pe_close}\n- **SL:** ₹{round(pe_low - 1, 2)}\n- **Target:** ₹{round(pe_close + (2 * pe_risk), 2)}")
+        pe_entry = pe_close
+        pe_sl = pe_low - BUFFER
+        pe_risk = pe_entry - pe_sl
+        pe_target = pe_entry + (2 * pe_risk)
+        st.error(f"📉 **PE BUY TRIGGERED!**\n\n- **Entry (Close):** ₹{round(pe_entry, 2)}\n- **SL (Low - 2pts):** ₹{round(pe_sl, 2)}\n- **Target (1:2):** ₹{round(pe_target, 2)}")
     else:
         st.info("⚪ PE Buy Trade: Conditions Not Met")
 
-st.caption(f"🔄 Auto-Refreshed At: {datetime.datetime.now().strftime('%H:%M:%S')}")
+st.caption(f"🔄 Auto-Refreshed At (IST): {datetime.datetime.now(IST).strftime('%H:%M:%S')}")
