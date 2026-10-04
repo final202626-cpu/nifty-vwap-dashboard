@@ -6,21 +6,31 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Nifty Multi-Confirmation Sniper Dashboard", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Nifty Advanced Sniper Terminal", page_icon="⚡", layout="wide")
 
-# AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga
+# AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga (No manual refresh needed)
 st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
 
-hide_streamlit_style = """
+# --- DARK MODE & HIDE UI CSS ---
+dark_mode_style = """
 <style>
 #MainMenu {visibility: hidden;}
 header {visibility: hidden;}
 footer {visibility: hidden;}
+/* Force Dark Background */
+.stApp {
+    background-color: #0E1117;
+    color: #FAFAFA;
+}
+/* Table text color adjust for dark mode */
+.stDataFrame {
+    color: white;
+}
 </style>
 """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+st.markdown(dark_mode_style, unsafe_allow_html=True)
 
-st.title("⚡ Nifty Multi-Confirmation Sniper Dashboard (Dhan Engine)")
+st.title("⚡ Nifty Advanced Sniper Terminal")
 
 # --- 1. FETCH SECRETS ---
 try:
@@ -43,7 +53,6 @@ IST = pytz.timezone('Asia/Kolkata')
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
     """Fetch intraday 3-min candles for VWAP & PDVWAP calculation"""
     try:
-        # Hamesha IST ke hisab se 'today' nikalega
         today_date = datetime.datetime.now(IST).date()
         from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
         to_date = today_date.strftime("%Y-%m-%d")
@@ -72,15 +81,12 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
             "volume": res.get("volume", [0] * len(res["close"]))
         })
 
-        # Epoch ko IST datetime me convert karke date extract karna
         df["datetime"] = pd.to_datetime(df["epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
         df["date"] = df["datetime"].dt.date
 
-        # Filter strictly for today in IST
         today_df = df[df["date"] == today_date].reset_index(drop=True)
         
         if not today_df.empty:
-            # Strictly extract Day Open Price (9:15 AM first candle open)
             day_open_price = today_df["open"].iloc[0]
             
             tp = (today_df["high"] + today_df["low"] + today_df["close"]) / 3
@@ -96,7 +102,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
             day_open_price = current_price
             intraday_vwap, c_open, c_high, c_low, c_close = current_price, current_price, current_price, current_price, current_price
 
-        # Calculate Previous Day VWAP (PDVWAP)
         past_days = df[df["date"] < today_date]
         if not past_days.empty:
             last_date = past_days["date"].max()
@@ -143,7 +148,6 @@ def get_atm_option_keys(atm_strike):
 # --- 3. EXECUTE DASHBOARD ENGINE ---
 spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price = get_dhan_history("13", "NSE_IDX", "INDEX")
 
-# Strike selection locked strictly on 9:15 AM Open Price
 if spot_open_price > 0:
     atm_strike = int(round(spot_open_price / 50) * 50)
 else:
@@ -151,11 +155,9 @@ else:
 
 ce_sec_id, pe_sec_id = get_atm_option_keys(atm_strike)
 
-st.sidebar.subheader("🎯 Dhan Auto-Engine Setup")
+st.sidebar.subheader("🎯 Auto-Engine Setup")
 st.sidebar.write(f"**Nifty Day Open:** ₹{spot_open_price}")
 st.sidebar.write(f"**Locked ATM Strike:** {atm_strike}")
-st.sidebar.write(f"**CE Security ID:** {ce_sec_id}")
-st.sidebar.write(f"**PE Security ID:** {pe_sec_id}")
 st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec (IST)")
 
 if ce_sec_id:
@@ -185,10 +187,12 @@ col2.metric(f"Locked ATM CE ({atm_strike})", f"₹{ce_price}")
 col3.metric(f"Locked ATM PE ({atm_strike})", f"₹{pe_price}")
 
 st.markdown("---")
+
+# Yahan par OLD aur NEW update kiya hai VWAP aur PDVWAP ki jagah
 matrix_data = [
-    {"Component": "Nifty Spot", "Price": spot_price, "PDVWAP": round(spot_pdvwap, 2), "VWAP": round(spot_intra_vwap, 2), "Bullish Status": "🟢 Bull Bias" if bull_bias else "⚪", "Bearish Status": "🔴 Bear Bias" if bear_bias else "⚪"},
-    {"Component": "CE Option", "Price": ce_price, "PDVWAP": round(ce_pdvwap, 2), "VWAP": round(ce_intra_vwap, 2), "Bullish Status": "🟢 Strong Buyer" if ce_strong_buyer else "⚪", "Bearish Status": "🔴 Strong Seller" if ce_strong_seller else "⚪"},
-    {"Component": "PE Option", "Price": pe_price, "PDVWAP": round(pe_pdvwap, 2), "VWAP": round(pe_intra_vwap, 2), "Bullish Status": "🟢 Strong Seller" if pe_strong_seller else "⚪", "Bearish Status": "🔴 Strong Buyer" if pe_strong_buyer else "⚪"},
+    {"Component": "Nifty Spot", "Price": spot_price, "OLD": round(spot_pdvwap, 2), "NEW": round(spot_intra_vwap, 2), "Bullish Status": "🟢 Bull Bias" if bull_bias else "⚪", "Bearish Status": "🔴 Bear Bias" if bear_bias else "⚪"},
+    {"Component": "CE Option", "Price": ce_price, "OLD": round(ce_pdvwap, 2), "NEW": round(ce_intra_vwap, 2), "Bullish Status": "🟢 Strong Buyer" if ce_strong_buyer else "⚪", "Bearish Status": "🔴 Strong Seller" if ce_strong_seller else "⚪"},
+    {"Component": "PE Option", "Price": pe_price, "OLD": round(pe_pdvwap, 2), "NEW": round(pe_intra_vwap, 2), "Bullish Status": "🟢 Strong Seller" if pe_strong_seller else "⚪", "Bearish Status": "🔴 Strong Buyer" if pe_strong_buyer else "⚪"},
 ]
 st.dataframe(pd.DataFrame(matrix_data), use_container_width=True)
 
@@ -198,7 +202,6 @@ st.subheader("🚨 Live A+ Multi-Confirmation Trade Signals")
 ce_buy_trade = bull_bias and pe_strong_seller and ce_strong_buyer
 pe_buy_trade = bear_bias and ce_strong_seller and pe_strong_buyer
 
-# Buffer set to 2 points as requested for SL
 BUFFER = 2.0
 
 col_sig1, col_sig2 = st.columns(2)
