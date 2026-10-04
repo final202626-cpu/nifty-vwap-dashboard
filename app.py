@@ -11,26 +11,8 @@ st.set_page_config(page_title="Nifty Advanced Sniper Terminal", page_icon="⚡",
 # AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga
 st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
 
-# --- DARK MODE STRICK UI CSS ---
-dark_mode_style = """
-<style>
-#MainMenu {visibility: hidden;}
-header {visibility: hidden;}
-footer {visibility: hidden;}
-/* Force Dark Background and White Text globally */
-.stApp {
-    background-color: #0E1117 !important;
-    color: #FAFAFA !important;
-}
-/* Table text color adjust */
-.stDataFrame {
-    color: #FAFAFA !important;
-}
-</style>
-"""
-st.markdown(dark_mode_style, unsafe_allow_html=True)
-
 st.title("⚡ Nifty Advanced Sniper Terminal")
+st.caption("💡 Tip: Go to Top-Right Menu (⋮) -> Settings -> Theme -> Select 'Dark' for perfect Dark Mode.")
 
 # --- 1. FETCH SECRETS ---
 try:
@@ -46,13 +28,17 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# TIMEZONE SETUP: Strictly Indian Standard Time (IST) lock
+# TIMEZONE SETUP
 IST = pytz.timezone('Asia/Kolkata')
+today_date = datetime.datetime.now(IST).date()
+
+# --- INITIALIZE TRADE LOGGER IN SESSION STATE ---
+if 'trades' not in st.session_state:
+    st.session_state.trades = {}
 
 # --- 2. DHAN API HELPERS ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
     try:
-        today_date = datetime.datetime.now(IST).date()
         from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
         to_date = today_date.strftime("%Y-%m-%d")
 
@@ -87,7 +73,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
         
         if not today_df.empty:
             day_open_price = today_df["open"].iloc[0]
-            
             tp = (today_df["high"] + today_df["low"] + today_df["close"]) / 3
             cum_vol = today_df["volume"].cumsum()
             cum_tp_vol = (tp * today_df["volume"]).cumsum()
@@ -115,7 +100,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
         return current_price, intraday_vwap, pdvwap, c_open, c_high, c_low, c_close, day_open_price
 
     except Exception as e:
-        st.error(f"🚨 Data Fetch Error for Security {security_id}: {e}")
         return 0, 0, 0, 0, 0, 0, 0, 0
 
 def get_atm_option_keys(atm_strike):
@@ -125,7 +109,6 @@ def get_atm_option_keys(atm_strike):
         res = requests.post(url, json=payload, headers=HEADERS, timeout=10).json()
 
         if res.get("status") == "failure" or "data" not in res:
-            st.error(f"🚨 Dhan Option Chain Error: {res.get('remarks', res)}")
             return None, None
 
         oc_data = res["data"]
@@ -138,9 +121,7 @@ def get_atm_option_keys(atm_strike):
             pe_sec_id = strike_info.get("pe", {}).get("security_id")
 
         return ce_sec_id, pe_sec_id
-
     except Exception as e:
-        st.error(f"🚨 Option Chain Fetch Exception: {e}")
         return None, None
 
 # --- 3. EXECUTE DASHBOARD ENGINE ---
@@ -156,7 +137,7 @@ ce_sec_id, pe_sec_id = get_atm_option_keys(atm_strike)
 st.sidebar.subheader("🎯 Auto-Engine Setup")
 st.sidebar.write(f"**Nifty Day Open:** ₹{spot_open_price}")
 st.sidebar.write(f"**Strike:** {atm_strike}")
-st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec (IST)")
+st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec")
 
 if ce_sec_id:
     ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close, _ = get_dhan_history(ce_sec_id, "NSE_FNO", "OPTIDX")
@@ -185,7 +166,6 @@ col2.metric(f"Strike CE ({atm_strike})", f"₹{ce_price}")
 col3.metric(f"Strike PE ({atm_strike})", f"₹{pe_price}")
 
 st.markdown("---")
-
 matrix_data = [
     {"Component": "Nifty Spot", "Price": spot_price, "OLD": round(spot_pdvwap, 2), "NEW": round(spot_intra_vwap, 2), "Bullish Status": "🟢 Bull Bias" if bull_bias else "⚪", "Bearish Status": "🔴 Bear Bias" if bear_bias else "⚪"},
     {"Component": "CE Option", "Price": ce_price, "OLD": round(ce_pdvwap, 2), "NEW": round(ce_intra_vwap, 2), "Bullish Status": "🟢 Strong Buyer" if ce_strong_buyer else "⚪", "Bearish Status": "🔴 Strong Seller" if ce_strong_seller else "⚪"},
@@ -193,33 +173,108 @@ matrix_data = [
 ]
 st.dataframe(pd.DataFrame(matrix_data), use_container_width=True)
 
-st.markdown("---")
-st.subheader("🚨 Live A+ Multi-Confirmation Trade Signals")
-
-ce_buy_trade = bull_bias and pe_strong_seller and ce_strong_buyer
-pe_buy_trade = bear_bias and ce_strong_seller and pe_strong_buyer
-
+# --- 6. AUTO-TRADE TRACKER & LOGGER ---
+ce_buy_condition = bull_bias and pe_strong_seller and ce_strong_buyer
+pe_buy_condition = bear_bias and ce_strong_seller and pe_strong_buyer
 BUFFER = 2.0
+current_time_str = datetime.datetime.now(IST).strftime("%H:%M:%S")
+
+# Check Active Trades & Update Status
+active_ce_id = None
+active_pe_id = None
+
+for tid, t in st.session_state.trades.items():
+    if t["Type"] == "CE BUY" and t["Status"] == "Active 🟢":
+        active_ce_id = tid
+    if t["Type"] == "PE BUY" and t["Status"] == "Active 🔴":
+        active_pe_id = tid
+
+# CE Tracking
+if active_ce_id:
+    trade = st.session_state.trades[active_ce_id]
+    if ce_price >= trade["Target"]:
+        trade["Status"] = "Target Hit 🎯"
+    elif ce_price <= trade["SL"]:
+        trade["Status"] = "SL Hit ❌"
+elif ce_buy_condition and spot_price > 0:
+    # Open new CE Trade
+    st.session_state.trades[f"CE_{current_time_str}"] = {
+        "Date": today_date.strftime("%Y-%m-%d"),
+        "Time": current_time_str,
+        "Type": "CE BUY",
+        "Nifty_Open": spot_open_price,
+        "Strike": atm_strike,
+        "Entry": ce_close,
+        "SL": round(ce_low - BUFFER, 2),
+        "Target": round(ce_close + (2 * (ce_close - (ce_low - BUFFER))), 2),
+        "Status": "Active 🟢"
+    }
+
+# PE Tracking
+if active_pe_id:
+    trade = st.session_state.trades[active_pe_id]
+    if pe_price >= trade["Target"]:
+        trade["Status"] = "Target Hit 🎯"
+    elif pe_price <= trade["SL"]:
+        trade["Status"] = "SL Hit ❌"
+elif pe_buy_condition and spot_price > 0:
+    # Open new PE Trade
+    st.session_state.trades[f"PE_{current_time_str}"] = {
+        "Date": today_date.strftime("%Y-%m-%d"),
+        "Time": current_time_str,
+        "Type": "PE BUY",
+        "Nifty_Open": spot_open_price,
+        "Strike": atm_strike,
+        "Entry": pe_close,
+        "SL": round(pe_low - BUFFER, 2),
+        "Target": round(pe_close + (2 * (pe_close - (pe_low - BUFFER))), 2),
+        "Status": "Active 🔴"
+    }
+
+st.markdown("---")
+st.subheader("🚨 Live Active Trades")
 
 col_sig1, col_sig2 = st.columns(2)
+
+# Display Pop-ups only if there is an ACTIVE trade. It will lock on screen!
 with col_sig1:
-    if ce_buy_trade:
-        ce_entry = ce_close
-        ce_sl = ce_low - BUFFER
-        ce_risk = ce_entry - ce_sl
-        ce_target = ce_entry + (2 * ce_risk)
-        st.success(f"🚀 **CE BUY TRIGGERED!**\n\n- **Entry (Close):** ₹{round(ce_entry, 2)}\n- **SL (Low - 2pts):** ₹{round(ce_sl, 2)}\n- **Target (1:2):** ₹{round(ce_target, 2)}")
+    if active_ce_id or (ce_buy_condition and not active_ce_id):
+        tid = active_ce_id if active_ce_id else f"CE_{current_time_str}"
+        if tid in st.session_state.trades and st.session_state.trades[tid]["Status"] == "Active 🟢":
+            t = st.session_state.trades[tid]
+            st.success(f"🚀 **CE BUY ACTIVE!**\n\n- **Entry:** ₹{t['Entry']}\n- **SL:** ₹{t['SL']}\n- **Target:** ₹{t['Target']}")
+        else:
+            st.info("⚪ CE Buy Trade: Waiting for conditions...")
     else:
-        st.info("⚪ CE Buy Trade: Conditions Not Met")
+        st.info("⚪ CE Buy Trade: Waiting for conditions...")
 
 with col_sig2:
-    if pe_buy_trade:
-        pe_entry = pe_close
-        pe_sl = pe_low - BUFFER
-        pe_risk = pe_entry - pe_sl
-        pe_target = pe_entry + (2 * pe_risk)
-        st.error(f"📉 **PE BUY TRIGGERED!**\n\n- **Entry (Close):** ₹{round(pe_entry, 2)}\n- **SL (Low - 2pts):** ₹{round(pe_sl, 2)}\n- **Target (1:2):** ₹{round(pe_target, 2)}")
+    if active_pe_id or (pe_buy_condition and not active_pe_id):
+        tid = active_pe_id if active_pe_id else f"PE_{current_time_str}"
+        if tid in st.session_state.trades and st.session_state.trades[tid]["Status"] == "Active 🔴":
+            t = st.session_state.trades[tid]
+            st.error(f"📉 **PE BUY ACTIVE!**\n\n- **Entry:** ₹{t['Entry']}\n- **SL:** ₹{t['SL']}\n- **Target:** ₹{t['Target']}")
+        else:
+            st.info("⚪ PE Buy Trade: Waiting for conditions...")
     else:
-        st.info("⚪ PE Buy Trade: Conditions Not Met")
+        st.info("⚪ PE Buy Trade: Waiting for conditions...")
 
-st.caption(f"🔄 Auto-Refreshed At (IST): {datetime.datetime.now(IST).strftime('%H:%M:%S')}")
+st.markdown("---")
+st.subheader("📊 Auto-Updating Trade Excel / Log")
+
+if st.session_state.trades:
+    # Reverse list so newest trade is on top
+    df_trades = pd.DataFrame(list(st.session_state.trades.values()))[::-1]
+    st.dataframe(df_trades, use_container_width=True)
+    
+    csv = df_trades.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download Excel (CSV)",
+        data=csv,
+        file_name=f"Trade_Log_{today_date}.csv",
+        mime="text/csv"
+    )
+else:
+    st.write("⏳ Abhi tak koi trade activate nahi hua hai...")
+
+st.caption(f"🔄 Last Auto-Refreshed At (IST): {datetime.datetime.now(IST).strftime('%H:%M:%S')}")
