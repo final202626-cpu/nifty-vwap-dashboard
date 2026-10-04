@@ -8,23 +8,23 @@ from streamlit_autorefresh import st_autorefresh
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Nifty Advanced Sniper Terminal", page_icon="⚡", layout="wide")
 
-# AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga (No manual refresh needed)
+# AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga
 st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
 
-# --- DARK MODE & HIDE UI CSS ---
+# --- DARK MODE STRICK UI CSS ---
 dark_mode_style = """
 <style>
 #MainMenu {visibility: hidden;}
 header {visibility: hidden;}
 footer {visibility: hidden;}
-/* Force Dark Background */
+/* Force Dark Background and White Text globally */
 .stApp {
-    background-color: #0E1117;
-    color: #FAFAFA;
+    background-color: #0E1117 !important;
+    color: #FAFAFA !important;
 }
-/* Table text color adjust for dark mode */
+/* Table text color adjust */
 .stDataFrame {
-    color: white;
+    color: #FAFAFA !important;
 }
 </style>
 """
@@ -51,7 +51,6 @@ IST = pytz.timezone('Asia/Kolkata')
 
 # --- 2. DHAN API HELPERS ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
-    """Fetch intraday 3-min candles for VWAP & PDVWAP calculation"""
     try:
         today_date = datetime.datetime.now(IST).date()
         from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
@@ -120,7 +119,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
         return 0, 0, 0, 0, 0, 0, 0, 0
 
 def get_atm_option_keys(atm_strike):
-    """Fetch ATM CE and PE security IDs for the locked ATM strike from Dhan Option Chain"""
     try:
         url = "https://api.dhan.co/v2/optionchain"
         payload = {"UnderlyingScrip": 13, "UnderlyingSeg": "NSE_IDX"}
@@ -157,7 +155,7 @@ ce_sec_id, pe_sec_id = get_atm_option_keys(atm_strike)
 
 st.sidebar.subheader("🎯 Auto-Engine Setup")
 st.sidebar.write(f"**Nifty Day Open:** ₹{spot_open_price}")
-st.sidebar.write(f"**Locked ATM Strike:** {atm_strike}")
+st.sidebar.write(f"**Strike:** {atm_strike}")
 st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec (IST)")
 
 if ce_sec_id:
@@ -183,12 +181,11 @@ pe_strong_seller = (pe_price < pe_pdvwap) and (pe_price < pe_intra_vwap)
 # --- 5. UI DISPLAY METRICS & TABLE ---
 col1, col2, col3 = st.columns(3)
 col1.metric("Nifty Spot Price", f"₹{spot_price}", f"Day Open: {spot_open_price}")
-col2.metric(f"Locked ATM CE ({atm_strike})", f"₹{ce_price}")
-col3.metric(f"Locked ATM PE ({atm_strike})", f"₹{pe_price}")
+col2.metric(f"Strike CE ({atm_strike})", f"₹{ce_price}")
+col3.metric(f"Strike PE ({atm_strike})", f"₹{pe_price}")
 
 st.markdown("---")
 
-# Yahan par OLD aur NEW update kiya hai VWAP aur PDVWAP ki jagah
 matrix_data = [
     {"Component": "Nifty Spot", "Price": spot_price, "OLD": round(spot_pdvwap, 2), "NEW": round(spot_intra_vwap, 2), "Bullish Status": "🟢 Bull Bias" if bull_bias else "⚪", "Bearish Status": "🔴 Bear Bias" if bear_bias else "⚪"},
     {"Component": "CE Option", "Price": ce_price, "OLD": round(ce_pdvwap, 2), "NEW": round(ce_intra_vwap, 2), "Bullish Status": "🟢 Strong Buyer" if ce_strong_buyer else "⚪", "Bearish Status": "🔴 Strong Seller" if ce_strong_seller else "⚪"},
