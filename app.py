@@ -167,22 +167,22 @@ if not st.session_state.alert_triggered and spot_price > 0:
         st.session_state.snapshot_time = datetime.datetime.now(IST).strftime("%H:%M:%S")
         st.session_state.snapshot_type = "🚀 CE BUY ALERT" if ce_buy_condition else "📉 PE BUY ALERT"
         
-        # Dashboard Table Logic as per your EXACT rules
+       # Dashboard Table Logic as per your EXACT rules
         frozen_table = [
             {
                 "Component": "Nifty Spot",
-                "Intraday Bias (vs VWAP)": "Bullish" if spot_price > spot_intra_vwap else "Bearish",
-                "Old Bias (vs PDVWAP)": "Bullish" if spot_price > spot_pdvwap else "Bearish"
+                "Intraday Bias": "Bullish" if spot_price > spot_intra_vwap else "Bearish",
+                "Old Bias": "Bullish" if spot_price > spot_pdvwap else "Bearish"
             },
             {
-                "Component": "Strike CE",
-                "Intraday Bias (vs VWAP)": "Intraday Call Buyer" if ce_price > ce_intra_vwap else "Intraday Call Seller",
-                "Old Bias (vs PDVWAP)": "Old Call Buyer" if ce_price > ce_pdvwap else "Old Call Seller"
+                "Component": "CE",
+                "Intraday Bias": "Intraday Call Buyer" if ce_price > ce_intra_vwap else "Intraday Call Seller",
+                "Old Bias": "Old Call Buyer" if ce_price > ce_pdvwap else "Old Call Seller"
             },
             {
-                "Component": "Strike PE",
-                "Intraday Bias (vs VWAP)": "Intraday Put Buyer" if pe_price > pe_intra_vwap else "Intraday Put Seller",
-                "Old Bias (vs PDVWAP)": "Old Put Buyer" if pe_price > pe_pdvwap else "Old Put Seller"
+                "Component": "PE",
+                "Intraday Bias": "Intraday Put Buyer" if pe_price > pe_intra_vwap else "Intraday Put Seller",
+                "Old Bias": "Old Put Buyer" if pe_price > pe_pdvwap else "Old Put Seller"
             }
         ]
         st.session_state.snapshot_table = pd.DataFrame(frozen_table)
