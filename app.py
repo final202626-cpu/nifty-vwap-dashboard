@@ -101,8 +101,8 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1
             cum_vol_prev = last_day_df["volume"].sum()
             cum_tp_vol_prev = (tp_prev * last_day_df["volume"]).sum()
             
-            pdvwap = cum_tp_vol_prev / cum_vol_prev if cum_vol_prev > 0 else last_day_df["close"].mean() # Ye kal ka VWAP hai
-            prev_close = last_day_df["close"].iloc[-1] # Ye kal ka Close hai
+            pdvwap = cum_tp_vol_prev / cum_vol_prev if cum_vol_prev > 0 else last_day_df["close"].mean()
+            prev_close = last_day_df["close"].iloc[-1]
         else:
             pdvwap = current_price
             prev_close = current_price
@@ -159,61 +159,70 @@ pe_strong_seller = (pe_price < pe_pdvwap) and (pe_price < pe_intra_vwap)
 ce_buy_condition = bull_bias and pe_strong_seller and ce_strong_buyer
 pe_buy_condition = bear_bias and ce_strong_seller and pe_strong_buyer
 
-# --- 5. ALERT TRIGGER & SNAPSHOT ENGINE (FREEZE LOGIC) ---
-# Ye sirf din me 1 baar trigger hoga aur freeze ho jayega
+# --- 5. BUILD LIVE CONTINUOUS TABLE (Updates every 3 secs) ---
+live_table_data = [
+    {
+        "Component": "Nifty Spot",
+        "Intraday Bias": "Bullish" if spot_price > spot_intra_vwap else "Bearish",
+        "Old Bias": "Bullish" if spot_price > spot_pdvwap else "Bearish"
+    },
+    {
+        "Component": "CE",
+        "Intraday Bias": "Intraday Call Buyer" if ce_price > ce_intra_vwap else "Intraday Call Seller",
+        "Old Bias": "Old Call Buyer" if ce_price > ce_pdvwap else "Old Call Seller"
+    },
+    {
+        "Component": "PE",
+        "Intraday Bias": "Intraday Put Buyer" if pe_price > pe_intra_vwap else "Intraday Put Seller",
+        "Old Bias": "Old Put Buyer" if pe_price > pe_pdvwap else "Old Put Seller"
+    }
+]
+df_live = pd.DataFrame(live_table_data)
+
+# Yesterday closing vs Yesterday VWAP Logic (Live)
+ce_close_status = "buyer" if ce_prev_close > ce_pdvwap else "seller"
+pe_close_status = "buyer" if pe_prev_close > pe_pdvwap else "seller"
+live_yesterday_text = f"ce close = {ce_close_status}  |  pe close = {pe_close_status}"
+
+# --- 6. ALERT TRIGGER & SNAPSHOT ENGINE (FREEZE LOGIC) ---
 if not st.session_state.alert_triggered and spot_price > 0:
     if ce_buy_condition or pe_buy_condition:
         st.session_state.alert_triggered = True
         st.session_state.snapshot_time = datetime.datetime.now(IST).strftime("%H:%M:%S")
         st.session_state.snapshot_type = "🚀 CE BUY ALERT" if ce_buy_condition else "📉 PE BUY ALERT"
         
-       # Dashboard Table Logic as per your EXACT rules
-        frozen_table = [
-            {
-                "Component": "Nifty Spot",
-                "Intraday Bias": "Bullish" if spot_price > spot_intra_vwap else "Bearish",
-                "Old Bias": "Bullish" if spot_price > spot_pdvwap else "Bearish"
-            },
-            {
-                "Component": "CE",
-                "Intraday Bias": "Intraday Call Buyer" if ce_price > ce_intra_vwap else "Intraday Call Seller",
-                "Old Bias": "Old Call Buyer" if ce_price > ce_pdvwap else "Old Call Seller"
-            },
-            {
-                "Component": "PE",
-                "Intraday Bias": "Intraday Put Buyer" if pe_price > pe_intra_vwap else "Intraday Put Seller",
-                "Old Bias": "Old Put Buyer" if pe_price > pe_pdvwap else "Old Put Seller"
-            }
-        ]
-        st.session_state.snapshot_table = pd.DataFrame(frozen_table)
-        
-        # Yesterday closing vs Yesterday VWAP Logic
-        ce_close_status = "buyer" if ce_prev_close > ce_pdvwap else "seller"
-        pe_close_status = "buyer" if pe_prev_close > pe_pdvwap else "seller"
-        
-        st.session_state.yesterday_status_text = f"ce close = {ce_close_status}  |  pe close = {pe_close_status}"
+        # Snapshot table takes the EXACT same data from the current live table moment
+        st.session_state.snapshot_table = df_live.copy()
+        st.session_state.yesterday_status_text = live_yesterday_text
 
-# --- 6. UI RENDER ---
+# --- 7. UI RENDER ---
+# 7A. TOP METRICS
 col1, col2, col3 = st.columns(3)
 col1.metric("Nifty Spot Price", f"₹{spot_price}", f"Day Open: {spot_open_price}")
 col2.metric(f"Strike CE ({atm_strike})", f"₹{ce_price}")
 col3.metric(f"Strike PE ({atm_strike})", f"₹{pe_price}")
 
 st.markdown("---")
-st.subheader("🚨 LIVE ALERT DASHBOARD")
 
+# 7B. LIVE MARKET STATUS TABLE (Continuous Update)
+st.subheader("📡 LIVE MARKET STATUS (Auto-Refreshing)")
+st.table(df_live)
+st.markdown(f"**{live_yesterday_text}**")
+
+st.markdown("---")
+
+# 7C. ALERT DASHBOARD (Freeze Table)
+st.subheader("🚨 LIVE ALERT DASHBOARD")
 if st.session_state.alert_triggered:
     st.success(f"**{st.session_state.snapshot_type} TRIGGERED AT {st.session_state.snapshot_time}**")
     st.caption("🔒 Ye data usi time ka freeze kiya hua snapshot hai (Pura din change nahi hoga)")
     
     st.table(st.session_state.snapshot_table)
-    
-    # Yesterday Status Print
     st.markdown(f"**{st.session_state.yesterday_status_text}**")
 else:
-    st.info("⏳ Waiting for Market Alert... Jab condition match hogi tab table yahan freeze ho jayegi.")
+    st.info("⏳ Waiting for Market Alert... Jab condition match hogi tab snapshot yahan freeze ho jayega.")
 
-# --- 7. AUTO-TRADE LOGGER (BACKGROUND) ---
+# --- 8. AUTO-TRADE LOGGER (BACKGROUND) ---
 BUFFER = 2.0
 current_time_str = datetime.datetime.now(IST).strftime("%H:%M:%S")
 
