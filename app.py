@@ -12,7 +12,6 @@ st.set_page_config(page_title="Nifty Advanced Sniper Terminal", page_icon="⚡",
 st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
 
 st.title("⚡ Nifty Advanced Sniper Terminal")
-st.caption("💡 Tip: Go to Top-Right Menu (⋮) -> Settings -> Theme -> Select 'Dark' for perfect Dark Mode.")
 
 # --- 1. FETCH SECRETS ---
 try:
@@ -37,7 +36,7 @@ if 'trades' not in st.session_state:
     st.session_state.trades = {}
 
 # --- 2. DHAN API HELPERS ---
-def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
+def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1"):
     try:
         from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
         to_date = today_date.strftime("%Y-%m-%d")
@@ -46,7 +45,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
             "securityId": str(security_id),
             "exchangeSegment": exchange_segment,
             "instrumentType": instrument_type,
-            "interval": interval,
+            "interval": str(interval),
             "fromDate": from_date,
             "toDate": to_date
         }
@@ -125,7 +124,7 @@ def get_atm_option_keys(atm_strike):
         return None, None
 
 # --- 3. EXECUTE DASHBOARD ENGINE ---
-spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price = get_dhan_history("13", "NSE_IDX", "INDEX")
+spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price = get_dhan_history("13", "NSE_IDX", "INDEX", interval="1")
 
 if spot_open_price > 0:
     atm_strike = int(round(spot_open_price / 50) * 50)
@@ -140,12 +139,12 @@ st.sidebar.write(f"**Strike:** {atm_strike}")
 st.sidebar.success("⚡ Live Auto-Refreshing Every 3 Sec")
 
 if ce_sec_id:
-    ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close, _ = get_dhan_history(ce_sec_id, "NSE_FNO", "OPTIDX")
+    ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close, _ = get_dhan_history(ce_sec_id, "NSE_FNO", "OPTIDX", interval="1")
 else:
     ce_price = ce_intra_vwap = ce_pdvwap = ce_open = ce_high = ce_low = ce_close = 0
 
 if pe_sec_id:
-    pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close, _ = get_dhan_history(pe_sec_id, "NSE_FNO", "OPTIDX")
+    pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close, _ = get_dhan_history(pe_sec_id, "NSE_FNO", "OPTIDX", interval="1")
 else:
     pe_price = pe_intra_vwap = pe_pdvwap = pe_open = pe_high = pe_low = pe_close = 0
 
@@ -179,7 +178,6 @@ pe_buy_condition = bear_bias and ce_strong_seller and pe_strong_buyer
 BUFFER = 2.0
 current_time_str = datetime.datetime.now(IST).strftime("%H:%M:%S")
 
-# Check Active Trades & Update Status
 active_ce_id = None
 active_pe_id = None
 
@@ -189,7 +187,6 @@ for tid, t in st.session_state.trades.items():
     if t["Type"] == "PE BUY" and t["Status"] == "Active 🔴":
         active_pe_id = tid
 
-# CE Tracking
 if active_ce_id:
     trade = st.session_state.trades[active_ce_id]
     if ce_price >= trade["Target"]:
@@ -197,7 +194,6 @@ if active_ce_id:
     elif ce_price <= trade["SL"]:
         trade["Status"] = "SL Hit ❌"
 elif ce_buy_condition and spot_price > 0:
-    # Open new CE Trade
     st.session_state.trades[f"CE_{current_time_str}"] = {
         "Date": today_date.strftime("%Y-%m-%d"),
         "Time": current_time_str,
@@ -210,7 +206,6 @@ elif ce_buy_condition and spot_price > 0:
         "Status": "Active 🟢"
     }
 
-# PE Tracking
 if active_pe_id:
     trade = st.session_state.trades[active_pe_id]
     if pe_price >= trade["Target"]:
@@ -218,7 +213,6 @@ if active_pe_id:
     elif pe_price <= trade["SL"]:
         trade["Status"] = "SL Hit ❌"
 elif pe_buy_condition and spot_price > 0:
-    # Open new PE Trade
     st.session_state.trades[f"PE_{current_time_str}"] = {
         "Date": today_date.strftime("%Y-%m-%d"),
         "Time": current_time_str,
@@ -236,7 +230,6 @@ st.subheader("🚨 Live Active Trades")
 
 col_sig1, col_sig2 = st.columns(2)
 
-# Display Pop-ups only if there is an ACTIVE trade. It will lock on screen!
 with col_sig1:
     if active_ce_id or (ce_buy_condition and not active_ce_id):
         tid = active_ce_id if active_ce_id else f"CE_{current_time_str}"
@@ -263,7 +256,6 @@ st.markdown("---")
 st.subheader("📊 Auto-Updating Trade Excel / Log")
 
 if st.session_state.trades:
-    # Reverse list so newest trade is on top
     df_trades = pd.DataFrame(list(st.session_state.trades.values()))[::-1]
     st.dataframe(df_trades, use_container_width=True)
     
