@@ -55,7 +55,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1
         from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
         to_date = today_date.strftime("%Y-%m-%d")
 
-        # FIX: Dhan API expects 'instrument' NOT 'instrumentType'
         payload = {
             "securityId": str(security_id),
             "exchangeSegment": exchange_segment,
@@ -68,12 +67,15 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1
         url = "https://api.dhan.co/v2/charts/intraday"
         res = requests.post(url, json=payload, headers=HEADERS, timeout=10).json()
 
-        if "start_Time" not in res or not res["start_Time"]:
-            err_msg = res.get("remarks") or res.get("errorMessage") or str(res)
+        # Flexible Time Key Lookup for Dhan API variations
+        time_key = next((k for k in ["start_Time", "start_time", "startTime", "timestamp", "epoch"] if k in res and res[k]), None)
+
+        if not time_key or "close" not in res or not res["close"]:
+            err_msg = res.get("remarks") or res.get("errorMessage") or str(res)[:200]
             return 0, 0, 0, 0, 0, 0, 0, 0, 0, f"Charts API Error (SecID {security_id}): {err_msg}"
 
         df = pd.DataFrame({
-            "epoch": res["start_Time"],
+            "epoch": res[time_key],
             "open": res["open"],
             "high": res["high"],
             "low": res["low"],
@@ -124,7 +126,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1
 def get_atm_option_keys(atm_strike):
     try:
         url = "https://api.dhan.co/v2/optionchain"
-        # FIX: UnderlyingSeg for Nifty Index is "IDX_I"
         payload = {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"}
         res = requests.post(url, json=payload, headers=HEADERS, timeout=10).json()
 
@@ -134,7 +135,6 @@ def get_atm_option_keys(atm_strike):
         oc_data = res.get("data", {})
         oc_list = oc_data.get("oc", {})
         
-        # FIX: Float strike matching for keys like "24700.000000"
         target_strike = float(atm_strike)
         for strike_str, strike_info in oc_list.items():
             try:
@@ -149,7 +149,6 @@ def get_atm_option_keys(atm_strike):
         return None, None, f"Option Chain Exception: {str(e)}"
 
 # --- 3. FETCH LIVE MARKET DATA ---
-# FIX: Nifty Spot exchangeSegment is "IDX_I"
 spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price, spot_prev_close, status_spot = get_dhan_history("13", "IDX_I", "INDEX", interval="1")
 
 if status_spot != "OK":
@@ -309,9 +308,9 @@ else:
 
 # --- 9. DEBUG & ERROR LOG PANEL ---
 st.markdown("---")
-with st.expander("🛠️ API Debug & Error Logs (Bina guess kiye direct error dekho)"):
+with st.expander("🛠️ API Debug & Error Logs"):
     if debug_logs:
         for log in debug_logs:
             st.error(log)
     else:
-        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Koi API Error nahi hai.")
+        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Live Chart & Options Connected.")
