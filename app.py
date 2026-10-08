@@ -47,9 +47,9 @@ if 'alert_triggered' not in st.session_state:
     st.session_state.snapshot_type = None
     st.session_state.yesterday_status_text = ""
 
-# --- 2. DHAN API HELPERS & DEBUGGER ---
 debug_logs = []
 
+# --- 2. DHAN API HELPERS ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1"):
     try:
         from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
@@ -71,7 +71,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1
         time_key = next((k for k in ["start_Time", "start_time", "startTime", "timestamp", "epoch"] if k in res and res[k]), None)
 
         if not time_key or "close" not in res or not res["close"]:
-            err_msg = res.get("remarks") or res.get("errorMessage") or str(res)[:200]
+            err_msg = res.get("remarks") or res.get("errorMessage") or str(res)[:150]
             return 0, 0, 0, 0, 0, 0, 0, 0, 0, f"Charts API Error (SecID {security_id}): {err_msg}"
 
         df = pd.DataFrame({
@@ -123,30 +123,62 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1
     except Exception as e:
         return 0, 0, 0, 0, 0, 0, 0, 0, 0, f"Exception (SecID {security_id}): {str(e)}"
 
-def get_atm_option_keys(atm_strike):
+# CACHE OPTION CHAIN LOOKUP FOR 5 MINS TO AVOID RATE LIMITS
+@st.cache_data(ttl=300)
+def get_atm_option_keys_cached(atm_strike, token, client_id):
+    headers = {
+        "access-token": token,
+        "client-id": client_id,
+        "Content-Type": "application/json"
+    }
     try:
-        url = "https://api.dhan.co/v2/optionchain"
-        payload = {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"}
-        res = requests.post(url, json=payload, headers=HEADERS, timeout=10).json()
+        # Step 1: Nearest Expiry List Fetch Karein
+        exp_url = "https://api.dhan.co/v2/optionchain/expirylist"
+        exp_payload = {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"}
+        exp_res = requests.post(exp_url, json=exp_payload, headers=headers, timeout=10).json()
 
-        if res.get("status") == "failure" or "data" not in res:
-            return None, None, f"Option Chain API Error: {res}"
-        
-        oc_data = res.get("data", {})
+        expiry_dates = exp_res.get("data", [])
+        if not expiry_dates:
+            err = exp_res.get("remarks") or exp_res.get("errorMessage") or str(exp_res)[:150]
+            return None, None, f"Expiry List API Error: {err}"
+
+        nearest_expiry = expiry_dates[0]
+
+        # Step 2: Exact Expiry Date ke saath Option Chain Fetch Karein
+        oc_url = "https://api.dhan.co/v2/optionchain"
+        oc_payload = {
+            "UnderlyingScrip": 13,
+            "UnderlyingSeg": "IDX_I",
+            "Expiry": str(nearest_expiry)
+        }
+        oc_res = requests.post(oc_url, json=oc_payload, headers=headers, timeout=10).json()
+
+        if oc_res.get("status") == "failure" or "data" not in oc_res:
+            err = oc_res.get("remarks") or oc_res.get("errorMessage") or str(oc_res)[:150]
+            return None, None, f"Option Chain API Error: {err}"
+
+        oc_data = oc_res.get("data", {})
         oc_list = oc_data.get("oc", {})
-        
+
         target_strike = float(atm_strike)
         for strike_str, strike_info in oc_list.items():
             try:
                 if abs(float(strike_str) - target_strike) < 1.0:
-                    ce_id = strike_info.get("ce", {}).get("security_id")
-                    pe_id = strike_info.get("pe", {}).get("security_id")
-                    return ce_id, pe_id, "OK"
+                    ce_dict = strike_info.get("ce", {})
+                    pe_dict = strike_info.get("pe", {})
+                    ce_id = ce_dict.get("security_id") or ce_dict.get("securityId")
+                    pe_id = pe_dict.get("security_id") or pe_dict.get("securityId")
+                    if ce_id and pe_id:
+                        return str(ce_id), str(pe_id), "OK"
             except (ValueError, TypeError):
                 continue
-        return None, None, f"Strike {atm_strike} Option Chain keys me nahi mila."
+
+        return None, None, f"Strike {atm_strike} (Expiry {nearest_expiry}) Option Chain me nahi mila."
     except Exception as e:
         return None, None, f"Option Chain Exception: {str(e)}"
+
+def get_atm_option_keys(atm_strike):
+    return get_atm_option_keys_cached(atm_strike, ACCESS_TOKEN, CLIENT_ID)
 
 # --- 3. FETCH LIVE MARKET DATA ---
 spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price, spot_prev_close, status_spot = get_dhan_history("13", "IDX_I", "INDEX", interval="1")
@@ -154,7 +186,7 @@ spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price, spot_prev
 if status_spot != "OK":
     debug_logs.append(f"Spot Data Error: {status_spot}")
 
-atm_strike = int(round(spot_open_price / 50) * 50) if spot_open_price > 0 else (int(round(spot_price / 50) * 50) if spot_price > 0 else 24700)
+atm_strike = int(round(spot_open_price / 50) * 50) if spot_open_price > 0 else (int(round(spot_price / 50) * 50) if spot_price > 0 else 22600)
 ce_sec_id, pe_sec_id, status_oc = get_atm_option_keys(atm_strike)
 
 if status_oc != "OK":
