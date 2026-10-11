@@ -49,8 +49,8 @@ if 'alert_triggered' not in st.session_state:
 
 debug_logs = []
 
-# --- 2. DHAN API HELPERS ---
-def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1"):
+# --- 2. DHAN API HELPERS (3-MINUTE INTERVAL) ---
+def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
     try:
         from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
         to_date = today_date.strftime("%Y-%m-%d")
@@ -67,7 +67,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1
         url = "https://api.dhan.co/v2/charts/intraday"
         res = requests.post(url, json=payload, headers=HEADERS, timeout=10).json()
 
-        # Flexible Time Key Lookup for Dhan API variations
         time_key = next((k for k in ["start_Time", "start_time", "startTime", "timestamp", "epoch"] if k in res and res[k]), None)
 
         if not time_key or "close" not in res or not res["close"]:
@@ -123,7 +122,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="1
     except Exception as e:
         return 0, 0, 0, 0, 0, 0, 0, 0, 0, f"Exception (SecID {security_id}): {str(e)}"
 
-# CACHE OPTION CHAIN LOOKUP FOR 5 MINS TO AVOID RATE LIMITS
+# CACHE OPTION CHAIN LOOKUP FOR 5 MINS
 @st.cache_data(ttl=300)
 def get_atm_option_keys_cached(atm_strike, token, client_id):
     headers = {
@@ -132,7 +131,6 @@ def get_atm_option_keys_cached(atm_strike, token, client_id):
         "Content-Type": "application/json"
     }
     try:
-        # Step 1: Nearest Expiry List Fetch Karein
         exp_url = "https://api.dhan.co/v2/optionchain/expirylist"
         exp_payload = {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"}
         exp_res = requests.post(exp_url, json=exp_payload, headers=headers, timeout=10).json()
@@ -144,7 +142,6 @@ def get_atm_option_keys_cached(atm_strike, token, client_id):
 
         nearest_expiry = expiry_dates[0]
 
-        # Step 2: Exact Expiry Date ke saath Option Chain Fetch Karein
         oc_url = "https://api.dhan.co/v2/optionchain"
         oc_payload = {
             "UnderlyingScrip": 13,
@@ -180,8 +177,8 @@ def get_atm_option_keys_cached(atm_strike, token, client_id):
 def get_atm_option_keys(atm_strike):
     return get_atm_option_keys_cached(atm_strike, ACCESS_TOKEN, CLIENT_ID)
 
-# --- 3. FETCH LIVE MARKET DATA ---
-spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price, spot_prev_close, status_spot = get_dhan_history("13", "IDX_I", "INDEX", interval="1")
+# --- 3. FETCH LIVE MARKET DATA (3-MIN INTERVAL) ---
+spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price, spot_prev_close, status_spot = get_dhan_history("13", "IDX_I", "INDEX", interval="3")
 
 if status_spot != "OK":
     debug_logs.append(f"Spot Data Error: {status_spot}")
@@ -193,14 +190,14 @@ if status_oc != "OK":
     debug_logs.append(f"Option Chain Error: {status_oc}")
 
 if ce_sec_id:
-    ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close, _, ce_prev_close, status_ce = get_dhan_history(ce_sec_id, "NSE_FNO", "OPTIDX", interval="1")
+    ce_price, ce_intra_vwap, ce_pdvwap, ce_open, ce_high, ce_low, ce_close, _, ce_prev_close, status_ce = get_dhan_history(ce_sec_id, "NSE_FNO", "OPTIDX", interval="3")
     if status_ce != "OK":
         debug_logs.append(f"CE Option Error: {status_ce}")
 else:
     ce_price = ce_intra_vwap = ce_pdvwap = ce_open = ce_high = ce_low = ce_close = ce_prev_close = 0
 
 if pe_sec_id:
-    pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close, _, pe_prev_close, status_pe = get_dhan_history(pe_sec_id, "NSE_FNO", "OPTIDX", interval="1")
+    pe_price, pe_intra_vwap, pe_pdvwap, pe_open, pe_high, pe_low, pe_close, _, pe_prev_close, status_pe = get_dhan_history(pe_sec_id, "NSE_FNO", "OPTIDX", interval="3")
     if status_pe != "OK":
         debug_logs.append(f"PE Option Error: {status_pe}")
 else:
@@ -219,7 +216,7 @@ pe_strong_seller = (pe_price < pe_pdvwap) and (pe_price < pe_intra_vwap)
 ce_buy_condition = bull_bias and pe_strong_seller and ce_strong_buyer
 pe_buy_condition = bear_bias and ce_strong_seller and pe_strong_buyer
 
-# --- 5. BUILD LIVE CONTINUOUS TABLE (Updates every 3 secs) ---
+# --- 5. BUILD LIVE CONTINUOUS TABLE (VERTICAL / KHADA FORMAT) ---
 live_table_data = [
     {
         "Component": "Nifty Spot",
@@ -238,19 +235,19 @@ live_table_data = [
     }
 ]
 df_live = pd.DataFrame(live_table_data)
+df_live_vertical = df_live.set_index("Component").T
 
-# Yesterday closing vs Yesterday VWAP Logic (Live)
 ce_close_status = "buyer" if ce_prev_close > ce_pdvwap else "seller"
 pe_close_status = "buyer" if pe_prev_close > pe_pdvwap else "seller"
 live_yesterday_text = f"ce close = {ce_close_status}  |  pe close = {pe_close_status}"
 
-# --- 6. ALERT TRIGGER & SNAPSHOT ENGINE (FREEZE LOGIC) ---
+# --- 6. ALERT TRIGGER & SNAPSHOT ENGINE (FREEZE LOGIC WITH EXACT TIME) ---
 if not st.session_state.alert_triggered and spot_price > 0:
     if ce_buy_condition or pe_buy_condition:
         st.session_state.alert_triggered = True
-        st.session_state.snapshot_time = datetime.datetime.now(IST).strftime("%H:%M:%S")
+        st.session_state.snapshot_time = datetime.datetime.now(IST).strftime("%H:%M:%S IST")
         st.session_state.snapshot_type = "🚀 CE BUY ALERT" if ce_buy_condition else "📉 PE BUY ALERT"
-        st.session_state.snapshot_table = df_live.copy()
+        st.session_state.snapshot_table = df_live_vertical.copy()
         st.session_state.yesterday_status_text = live_yesterday_text
 
 # --- 7. UI RENDER ---
@@ -262,18 +259,18 @@ col3.metric(f"Strike PE ({atm_strike})", f"₹{pe_price}")
 
 st.markdown("---")
 
-# 7B. LIVE MARKET STATUS TABLE (Continuous Update)
+# 7B. LIVE MARKET STATUS TABLE (KHADA / VERTICAL FORMAT)
 st.subheader("📡 LIVE MARKET STATUS (Auto-Refreshing)")
-st.table(df_live)
+st.table(df_live_vertical)
 st.markdown(f"**{live_yesterday_text}**")
 
 st.markdown("---")
 
-# 7C. ALERT DASHBOARD (Freeze Table)
+# 7C. ALERT DASHBOARD (FREEZE TABLE WITH EXACT TIME)
 st.subheader("🚨 LIVE ALERT DASHBOARD")
 if st.session_state.alert_triggered:
     st.success(f"**{st.session_state.snapshot_type} TRIGGERED AT {st.session_state.snapshot_time}**")
-    st.caption("🔒 Ye data usi time ka freeze kiya hua snapshot hai (Pura din change nahi hoga)")
+    st.caption(f"🔒 Ye data {st.session_state.snapshot_time} par freeze kiya gaya snapshot hai (Pura din change nahi hoga)")
     st.table(st.session_state.snapshot_table)
     st.markdown(f"**{st.session_state.yesterday_status_text}**")
 else:
@@ -327,7 +324,6 @@ if st.session_state.trades:
     df_trades = pd.DataFrame(list(st.session_state.trades.values()))[::-1]
     st.dataframe(df_trades, use_container_width=True)
     
-    # EXPORT CSV / EXCEL
     csv_data = df_trades.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📥 Download Trade Log (CSV / Excel)",
@@ -345,4 +341,4 @@ with st.expander("🛠️ API Debug & Error Logs"):
         for log in debug_logs:
             st.error(log)
     else:
-        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Live Chart & Options Connected.")
+        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! 3-Min Interval Active.")
