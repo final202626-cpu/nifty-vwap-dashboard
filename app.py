@@ -5,6 +5,18 @@ import requests
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
+import requests
+
+def send_telegram_alert(message):
+    try:
+        bot_token = st.secrets["TELEGRAM_BOT_TOKEN"]
+        chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        pass # Agar net slow ho toh main app crash na ho
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Nifty Advanced Sniper Terminal", page_icon="⚡", layout="wide")
 
