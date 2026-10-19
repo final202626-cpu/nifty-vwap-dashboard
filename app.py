@@ -314,7 +314,7 @@ df_live_vertical = df_live.set_index("Component").T
 # Yesterday closing vs Yesterday VWAP status for strike
 ce_close_status = "Call Buyer" if ce_prev_close > ce_pdvwap else "Call seller"
 pe_close_status = "Put Buyer" if pe_prev_close > ce_pdvwap else "Put Seller" # Note: using respective pdvwap
-live_yesterday_text = f"Ce vwap ke upr/niche close: ce close = {ce_close_status} | pe close = {pe_close_status}"
+live_yesterday_text = f"Ce close = {ce_close_status} | Pe close = {pe_close_status}"
 
 # --- 7. ALERT TRIGGER & SNAPSHOT ENGINE (FREEZE LOGIC) ---
 if not st.session_state.alert_triggered and spot_price > 0:
@@ -356,7 +356,7 @@ if st.session_state.alert_triggered:
     st.markdown(f"**Pain Status:** `{st.session_state.pain_status}`")
     st.markdown(f"**{st.session_state.yesterday_status_text}**")
 else:
-    st.info("⏳ Waiting for Market Alert... Jab condition match hogi tab snapshot yahan freeze ho jayega.")
+    st.info("⏳ Waiting for Market Alert... Table freeze, When conditions are matched.")
 
 # --- 9. AUTO-TRADE LOGGER & EXPORT ---
 BUFFER = 2.0
@@ -414,7 +414,7 @@ if st.session_state.trades:
         mime="text/csv"
     )
 else:
-    st.write("⏳ Abhi tak koi trade lagaya nahi gaya hai...")
+    st.write("⏳ No Trade Activate Yet...")
 
 # --- 10. DEBUG & ERROR LOG PANEL ---
 st.markdown("---")
@@ -423,4 +423,4 @@ with st.expander("🛠️ API Debug & Error Logs"):
         for log in debug_logs:
             st.error(log)
     else:
-        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! 8:00 AM Health Check & 3-Min Interval Active.")
+        st.success("✅ All API Calls perfectly working! 8:00 AM Health Check & 3-Min Interval Active.")
