@@ -31,7 +31,7 @@ if 'morning_msg_date' not in st.session_state:
     st.session_state.morning_msg_date = None
 
 if now_ist.hour >= 8 and st.session_state.morning_msg_date != today_date:
-    send_telegram_alert("🟢 *Nifty Sniper Terminal:* 8:00 AM System Health Check - All systems OK, Tokens Active, Ready for Market!")
+    send_telegram_alert("🟢 *Nifty Sniper Terminal:* System Health Check - All systems OK, Tokens Active, Ready for Market!")
     st.session_state.morning_msg_date = today_date
 
 # HEADER WITH LIVE AUTO-REFRESH TIMESTAMP
@@ -106,7 +106,6 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
         df["datetime"] = pd.to_datetime(df["epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
         df["date"] = df["datetime"].dt.date
 
-        # Calculate cumulative VWAP for the entire dataframe series to get first and last candle VWAPs
         tp = (df["high"] + df["low"] + df["close"]) / 3
         cum_vol = df["volume"].cumsum()
         cum_tp_vol = (tp * df["volume"]).cumsum()
@@ -146,7 +145,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
     except Exception as e:
         return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, f"Exception (SecID {security_id}): {str(e)}"
 
-# CACHE OPTION CHAIN LOOKUP FOR 5 MINS
+# CACHE OPTION CHAIN LOOKUP FOR 5 MINS (Option Expiry lookup optimization)
 @st.cache_data(ttl=300)
 def get_atm_option_keys_cached(atm_strike, token, client_id):
     headers = {
@@ -241,28 +240,24 @@ pe_old_label = "Old Put Buyer" if pe_price > pe_pdvwap else "Old Put Seller"
 pe_new_label = "New Put Buyer" if pe_price > pe_intra_vwap else "New Put Seller"
 
 # --- 5. CORE CONDITIONS CHECK (6 CONDITIONS FOR CE & PE) ---
-# Condition checks based on PDVWAP and VWAP rules
-spot_c1 = spot_price > spot_pdvwap  # Spot PDVWAP upr
-spot_c2 = spot_price > spot_intra_vwap  # Spot VWAP upr
-pe_c3 = pe_price < pe_pdvwap  # Put PDVWAP niche
-pe_c4 = pe_price < pe_intra_vwap  # Put VWAP niche
-ce_c5 = ce_price > ce_pdvwap  # Call PDVWAP upr
-ce_c6 = ce_price > ce_intra_vwap  # Call VWAP upr (6th condition can be absent for 5/6)
+spot_c1 = spot_price > spot_pdvwap
+spot_c2 = spot_price > spot_intra_vwap
+pe_c3 = pe_price < pe_pdvwap
+pe_c4 = pe_price < pe_intra_vwap
+ce_c5 = ce_price > ce_pdvwap
+ce_c6 = ce_price > ce_intra_vwap
 
-# Bearish conditions for PE Trade
-spot_bear_c1 = spot_price < spot_pdvwap # Spot PDVWAP niche
-spot_bear_c2 = spot_price < spot_intra_vwap # Spot VWAP niche
-ce_bear_c3 = ce_price < ce_pdvwap # Call PDVWAP niche
-ce_bear_c4 = ce_price < ce_intra_vwap # Call VWAP niche
-pe_bear_c5 = pe_price > pe_pdvwap # Put PDVWAP upr
-pe_bear_c6 = pe_price > pe_intra_vwap # Put VWAP upr (6th condition can be absent for 5/6)
+spot_bear_c1 = spot_price < spot_pdvwap
+spot_bear_c2 = spot_price < spot_intra_vwap
+ce_bear_c3 = ce_price < ce_pdvwap
+ce_bear_c4 = ce_price < ce_intra_vwap
+pe_bear_c5 = pe_price > pe_pdvwap
+pe_bear_c6 = pe_price > pe_intra_vwap
 
-# CE Trade Evaluation (Conditions 1 to 5 compulsory, 6th optional)
 ce_core_5 = spot_c1 and spot_c2 and pe_c3 and pe_c4 and ce_c5
 ce_buy_6_of_6 = ce_core_5 and ce_c6
 ce_buy_5_of_6 = ce_core_5 and (not ce_c6)
 
-# PE Trade Evaluation (Conditions 1 to 5 compulsory, 6th optional)
 pe_core_5 = spot_bear_c1 and spot_bear_c2 and ce_bear_c3 and ce_bear_c4 and pe_bear_c5
 pe_buy_6_of_6 = pe_core_5 and pe_bear_c6
 pe_buy_5_of_6 = pe_core_5 and (not pe_bear_c6)
@@ -270,7 +265,6 @@ pe_buy_5_of_6 = pe_core_5 and (not pe_bear_c6)
 ce_buy_condition = ce_buy_6_of_6 or ce_buy_5_of_6
 pe_buy_condition = pe_buy_6_of_6 or pe_buy_5_of_6
 
-# Determine Condition Status Text
 current_condition_status = ""
 if ce_buy_6_of_6:
     current_condition_status = "6/6 (All conditions met)"
@@ -281,39 +275,35 @@ elif pe_buy_6_of_6:
 elif pe_buy_5_of_6:
     current_condition_status = "5/6 new put buyer absent"
 
-# Pain Check Calculation
-# CE Pain: agle din ka last 3 min candle ka vwap point < aaj ke 3 min first candle ke vwap point -> No Pain, else Pain Yes
-# PE Pain: agle din ka last 3 min candle ka vwap point > aaj ke 3 min first candle ke vwap point -> No Pain, else Pain Yes
 current_pain_status = ""
 if ce_buy_condition:
     current_pain_status = "No Pain" if spot_prev_last_vwap < spot_today_first_vwap else "Pain Yes"
 elif pe_buy_condition:
     current_pain_status = "No Pain" if spot_prev_last_vwap > spot_today_first_vwap else "Pain Yes"
 
-# --- 6. BUILD LIVE CONTINUOUS TABLE (VERTICAL / KHADA FORMAT) ---
+# --- 6. BUILD LIVE CONTINUOUS TABLE (OLD BIAS UPAR, INTRADAY BIAS NICHE) ---
 live_table_data = [
     {
         "Component": "Nifty Spot",
-        "Intraday Bias": spot_new_bias,
-        "Old Bias": spot_old_bias
+        "Old Bias": spot_old_bias,
+        "Intraday Bias": spot_new_bias
     },
     {
         "Component": "CE",
-        "Intraday Bias": ce_new_label,
-        "Old Bias": ce_old_label
+        "Old Bias": ce_old_label,
+        "Intraday Bias": ce_new_label
     },
     {
         "Component": "PE",
-        "Intraday Bias": pe_new_label,
-        "Old Bias": pe_old_label
+        "Old Bias": pe_old_label,
+        "Intraday Bias": pe_new_label
     }
 ]
 df_live = pd.DataFrame(live_table_data)
 df_live_vertical = df_live.set_index("Component").T
 
-# Yesterday closing vs Yesterday VWAP status for strike
 ce_close_status = "Call Buyer" if ce_prev_close > ce_pdvwap else "Call seller"
-pe_close_status = "Put Buyer" if pe_prev_close > ce_pdvwap else "Put Seller" # Note: using respective pdvwap
+pe_close_status = "Put Buyer" if pe_prev_close > pe_pdvwap else "Put Seller"
 live_yesterday_text = f"Ce close = {ce_close_status} | Pe close = {pe_close_status}"
 
 # --- 7. ALERT TRIGGER & SNAPSHOT ENGINE (FREEZE LOGIC) ---
@@ -327,7 +317,6 @@ if not st.session_state.alert_triggered and spot_price > 0:
         st.session_state.condition_status = current_condition_status
         st.session_state.pain_status = current_pain_status
 
-        # SEND TELEGRAM NOTIFICATION
         msg = f"🚨 *{st.session_state.snapshot_type} TRIGGERED*\n\n⏰ *Time:* {st.session_state.snapshot_time}\n🎯 *Strike:* {atm_strike}\n📊 *Nifty Spot:* ₹{spot_price}\n📋 *Condition:* {current_condition_status}\n⚠️ *Pain:* {current_pain_status}"
         send_telegram_alert(msg)
 
@@ -356,7 +345,7 @@ if st.session_state.alert_triggered:
     st.markdown(f"**Pain Status:** `{st.session_state.pain_status}`")
     st.markdown(f"**{st.session_state.yesterday_status_text}**")
 else:
-    st.info("⏳ Waiting for Market Alert... Table freeze, When conditions are matched.")
+    st.info("⏳ Waiting for Market Alert... Table freeze when conditions are Matched.")
 
 # --- 9. AUTO-TRADE LOGGER & EXPORT ---
 BUFFER = 2.0
@@ -414,7 +403,7 @@ if st.session_state.trades:
         mime="text/csv"
     )
 else:
-    st.write("⏳ No Trade Activate Yet...")
+    st.write("⏳ Trade Not Activate Yet...")
 
 # --- 10. DEBUG & ERROR LOG PANEL ---
 st.markdown("---")
@@ -423,4 +412,4 @@ with st.expander("🛠️ API Debug & Error Logs"):
         for log in debug_logs:
             st.error(log)
     else:
-        st.success("✅ All API Calls perfectly working! 8:00 AM Health Check & 3-Min Interval Active.")
+        st.success("✅ All API Calls perfectly working !")
