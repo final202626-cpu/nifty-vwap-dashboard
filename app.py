@@ -92,7 +92,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
 
         if not time_key or "close" not in res or not res["close"]:
             err_msg = res.get("remarks") or res.get("errorMessage") or str(res)[:150]
-            return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, f"Charts API Error (SecID {security_id}): {err_msg}"
+            return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, f"Charts API Error (SecID {security_id}): {err_msg}"
 
         df = pd.DataFrame({
             "epoch": res[time_key],
@@ -145,7 +145,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
     except Exception as e:
         return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, f"Exception (SecID {security_id}): {str(e)}"
 
-# CACHE OPTION CHAIN LOOKUP FOR 5 MINS (Option Expiry lookup optimization)
+# CACHE OPTION CHAIN LOOKUP FOR 5 MINS
 @st.cache_data(ttl=300)
 def get_atm_option_keys_cached(atm_strike, token, client_id):
     headers = {
@@ -227,15 +227,12 @@ else:
     pe_price = pe_intra_vwap = pe_pdvwap = pe_open = pe_high = pe_low = pe_close = pe_prev_close = 0
 
 # --- 4. EXACT LABELS DEFINITION ---
-# Spot Labels
 spot_old_bias = "Old Bias Bullish" if spot_price > spot_pdvwap else "Old Bias Bearish"
 spot_new_bias = "New Bias Bullish" if spot_price > spot_intra_vwap else "New Bias Bearish"
 
-# CE Labels
 ce_old_label = "Old Call Buyer" if ce_price > ce_pdvwap else "Old Call Seller"
 ce_new_label = "New Call Buyer" if ce_price > ce_intra_vwap else "New Call Seller"
 
-# PE Labels
 pe_old_label = "Old Put Buyer" if pe_price > pe_pdvwap else "Old Put Seller"
 pe_new_label = "New Put Buyer" if pe_price > pe_intra_vwap else "New Put Seller"
 
@@ -281,7 +278,7 @@ if ce_buy_condition:
 elif pe_buy_condition:
     current_pain_status = "No Pain" if spot_prev_last_vwap > spot_today_first_vwap else "Pain Yes"
 
-# --- 6. BUILD LIVE CONTINUOUS TABLE (OLD BIAS UPAR, INTRADAY BIAS NICHE) ---
+# --- 6. BUILD LIVE CONTINUOUS TABLE ---
 live_table_data = [
     {
         "Component": "Nifty Spot",
@@ -304,9 +301,9 @@ df_live_vertical = df_live.set_index("Component").T
 
 ce_close_status = "Call Buyer" if ce_prev_close > ce_pdvwap else "Call seller"
 pe_close_status = "Put Buyer" if pe_prev_close > pe_pdvwap else "Put Seller"
-live_yesterday_text = f"Ce close = {ce_close_status} | Pe close = {pe_close_status}"
+live_yesterday_text = f"Ce vwap ke upr/niche close: ce close = {ce_close_status} | pe close = {pe_close_status}"
 
-# --- 7. ALERT TRIGGER & SNAPSHOT ENGINE (FREEZE LOGIC) ---
+# --- 7. ALERT TRIGGER & SNAPSHOT ENGINE ---
 if not st.session_state.alert_triggered and spot_price > 0:
     if ce_buy_condition or pe_buy_condition:
         st.session_state.alert_triggered = True
@@ -328,14 +325,12 @@ col3.metric(f"Strike PE ({atm_strike})", f"₹{pe_price}")
 
 st.markdown("---")
 
-# LIVE MARKET STATUS TABLE (KHADA / VERTICAL FORMAT)
 st.subheader("📡 LIVE MARKET STATUS (Auto-Refreshing)")
 st.table(df_live_vertical)
 st.markdown(f"**{live_yesterday_text}**")
 
 st.markdown("---")
 
-# ALERT DASHBOARD (FREEZE TABLE)
 st.subheader("🚨 LIVE ALERT DASHBOARD")
 if st.session_state.alert_triggered:
     st.success(f"**{st.session_state.snapshot_type} TRIGGERED AT {st.session_state.snapshot_time}**")
@@ -345,7 +340,7 @@ if st.session_state.alert_triggered:
     st.markdown(f"**Pain Status:** `{st.session_state.pain_status}`")
     st.markdown(f"**{st.session_state.yesterday_status_text}**")
 else:
-    st.info("⏳ Waiting for Market Alert... Table freeze when conditions are Matched.")
+    st.info("⏳ Waiting for Market Alert... Jab condition match hogi tab snapshot yahan freeze ho jayega.")
 
 # --- 9. AUTO-TRADE LOGGER & EXPORT ---
 BUFFER = 2.0
@@ -403,7 +398,7 @@ if st.session_state.trades:
         mime="text/csv"
     )
 else:
-    st.write("⏳ Trade Not Activate Yet...")
+    st.write("⏳ Abhi tak koi trade lagaya nahi gaya hai...")
 
 # --- 10. DEBUG & ERROR LOG PANEL ---
 st.markdown("---")
@@ -412,4 +407,4 @@ with st.expander("🛠️ API Debug & Error Logs"):
         for log in debug_logs:
             st.error(log)
     else:
-        st.success("✅ All API Calls perfectly working !")
+        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Tuple mismatch fixed.")
