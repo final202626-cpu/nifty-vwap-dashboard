@@ -19,7 +19,7 @@ def send_telegram_alert(message):
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Nifty Advanced Sniper Terminal", page_icon="⚡", layout="wide")
 
-# AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga aur app sleep nahi hoga
+# AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga
 st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
 
 IST = pytz.timezone('Asia/Kolkata')
@@ -70,10 +70,10 @@ if 'alert_triggered' not in st.session_state:
 
 debug_logs = []
 
-# --- 2. DHAN API HELPERS (3-MINUTE INTERVAL) ---
+# --- 2. DHAN API HELPERS (EXACT VWAP & HISTORICAL DATA FIX) ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
     try:
-        from_date = (today_date - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        from_date = (today_date - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
         to_date = today_date.strftime("%Y-%m-%d")
 
         payload = {
@@ -100,45 +100,52 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
             "high": res["high"],
             "low": res["low"],
             "close": res["close"],
-            "volume": res.get("volume", [0] * len(res["close"]))
+            "volume": res.get("volume", [1] * len(res["close"]))
         })
 
         df["datetime"] = pd.to_datetime(df["epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
         df["date"] = df["datetime"].dt.date
 
-        tp = (df["high"] + df["low"] + df["close"]) / 3
-        cum_vol = df["volume"].cumsum()
-        cum_tp_vol = (tp * df["volume"]).cumsum()
-        df["vwap"] = cum_tp_vol / cum_vol
-        df["vwap"] = df["vwap"].fillna(df["close"])
+        # Per-day VWAP Calculation Logic to match Dhan Chart exactly
+        def calc_vwap(day_df):
+            if day_df.empty:
+                return day_df
+            tp = (day_df["high"] + day_df["low"] + day_df["close"]) / 3
+            vol = day_df["volume"].replace(0, 1)
+            cum_vol = vol.cumsum()
+            cum_tp_vol = (tp * vol).cumsum()
+            day_df["vwap"] = cum_tp_vol / cum_vol
+            return day_df
+
+        df = df.groupby("date", group_keys=False).apply(calc_vwap)
 
         today_df = df[df["date"] == today_date].reset_index(drop=True)
         
         if not today_df.empty:
-            day_open_price = today_df["open"].iloc[0]
-            intraday_vwap = today_df["vwap"].iloc[-1]
-            current_price = today_df["close"].iloc[-1]
+            day_open_price = float(today_df["open"].iloc[0])
+            intraday_vwap = float(today_df["vwap"].iloc[-1])
+            current_price = float(today_df["close"].iloc[-1])
             last_candle = today_df.iloc[-1]
-            c_open, c_high, c_low, c_close = last_candle["open"], last_candle["high"], last_candle["low"], last_candle["close"]
-            today_first_vwap = today_df["vwap"].iloc[0]
+            c_open, c_high, c_low, c_close = float(last_candle["open"]), float(last_candle["high"]), float(last_candle["low"]), float(last_candle["close"])
+            today_first_vwap = float(today_df["vwap"].iloc[0])
         else:
-            current_price = df["close"].iloc[-1] if not df.empty else 0
+            current_price = float(df["close"].iloc[-1]) if not df.empty else 0
             day_open_price = current_price
             intraday_vwap, c_open, c_high, c_low, c_close = current_price, current_price, current_price, current_price, current_price
             today_first_vwap = current_price
 
-        # Kal (Yesterday) Ka Data
+        # Kal (Yesterday) Ka Data Extraction
         past_days = df[df["date"] < today_date]
         if not past_days.empty:
             last_date = past_days["date"].max()
             last_day_df = past_days[past_days["date"] == last_date]
-            pdvwap = last_day_df["vwap"].iloc[-1]
-            prev_close = last_day_df["close"].iloc[-1]
-            prev_day_last_vwap = last_day_df["vwap"].iloc[-1]
+            pdvwap = float(last_day_df["vwap"].iloc[-1])
+            prev_close = float(last_day_df["close"].iloc[-1])
+            prev_day_last_vwap = float(last_day_df["vwap"].iloc[-1])
         else:
-            pdvwap = current_price
+            pdvwap = intraday_vwap if intraday_vwap > 0 else current_price
             prev_close = current_price
-            prev_day_last_vwap = current_price
+            prev_day_last_vwap = intraday_vwap
 
         return current_price, intraday_vwap, pdvwap, c_open, c_high, c_low, c_close, day_open_price, prev_close, prev_day_last_vwap, today_first_vwap, "OK"
 
@@ -206,7 +213,7 @@ spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price, spot_prev
 if status_spot != "OK":
     debug_logs.append(f"Spot Data Error: {status_spot}")
 
-atm_strike = int(round(spot_open_price / 50) * 50) if spot_open_price > 0 else (int(round(spot_price / 50) * 50) if spot_price > 0 else 23150)
+atm_strike = int(round(spot_open_price / 50) * 50) if spot_open_price > 0 else (int(round(spot_price / 50) * 50) if spot_price > 0 else 23000)
 ce_sec_id, pe_sec_id, status_oc = get_atm_option_keys(atm_strike)
 
 if status_oc != "OK":
@@ -226,30 +233,33 @@ if pe_sec_id:
 else:
     pe_price = pe_intra_vwap = pe_pdvwap = pe_open = pe_high = pe_low = pe_close = pe_prev_close = 0
 
-# --- 4. EXACT LABELS DEFINITION ---
-spot_old_bias = "Old Bias Bullish" if spot_price > spot_pdvwap else "Old Bias Bearish"
-spot_new_bias = "New Bias Bullish" if spot_price > spot_intra_vwap else "New Bias Bearish"
+# --- 4. EXACT LABELS DEFINITION (STRICT COMPARISON FIX) ---
+# Spot Labels
+spot_old_bias = "Old Bias Bullish" if spot_price >= spot_pdvwap else "Old Bias Bearish"
+spot_new_bias = "New Bias Bullish" if spot_price >= spot_intra_vwap else "New Bias Bearish"
 
-ce_old_label = "Old Call Buyer" if ce_price > ce_pdvwap else "Old Call Seller"
-ce_new_label = "New Call Buyer" if ce_price > ce_intra_vwap else "New Call Seller"
+# CE Labels
+ce_old_label = "Old Call Buyer" if ce_price >= ce_pdvwap else "Old Call Seller"
+ce_new_label = "New Call Buyer" if ce_price >= ce_intra_vwap else "New Call Seller"
 
-pe_old_label = "Old Put Buyer" if pe_price > pe_pdvwap else "Old Put Seller"
-pe_new_label = "New Put Buyer" if pe_price > pe_intra_vwap else "New Put Seller"
+# PE Labels
+pe_old_label = "Old Put Buyer" if pe_price >= pe_pdvwap else "Old Put Seller"
+pe_new_label = "New Put Buyer" if pe_price >= pe_intra_vwap else "New Put Seller"
 
 # --- 5. CORE CONDITIONS CHECK (6 CONDITIONS FOR CE & PE) ---
-spot_c1 = spot_price > spot_pdvwap
-spot_c2 = spot_price > spot_intra_vwap
+spot_c1 = spot_price >= spot_pdvwap
+spot_c2 = spot_price >= spot_intra_vwap
 pe_c3 = pe_price < pe_pdvwap
 pe_c4 = pe_price < pe_intra_vwap
-ce_c5 = ce_price > ce_pdvwap
-ce_c6 = ce_price > ce_intra_vwap
+ce_c5 = ce_price >= ce_pdvwap
+ce_c6 = ce_price >= ce_intra_vwap
 
 spot_bear_c1 = spot_price < spot_pdvwap
 spot_bear_c2 = spot_price < spot_intra_vwap
 ce_bear_c3 = ce_price < ce_pdvwap
 ce_bear_c4 = ce_price < ce_intra_vwap
-pe_bear_c5 = pe_price > pe_pdvwap
-pe_bear_c6 = pe_price > pe_intra_vwap
+pe_bear_c5 = pe_price >= pe_pdvwap
+pe_bear_c6 = pe_price >= pe_intra_vwap
 
 ce_core_5 = spot_c1 and spot_c2 and pe_c3 and pe_c4 and ce_c5
 ce_buy_6_of_6 = ce_core_5 and ce_c6
@@ -299,8 +309,8 @@ live_table_data = [
 df_live = pd.DataFrame(live_table_data)
 df_live_vertical = df_live.set_index("Component").T
 
-ce_close_status = "Call Buyer" if ce_prev_close > ce_pdvwap else "Call seller"
-pe_close_status = "Put Buyer" if pe_prev_close > pe_pdvwap else "Put Seller"
+ce_close_status = "Call Buyer" if ce_prev_close >= ce_pdvwap else "Call seller"
+pe_close_status = "Put Buyer" if pe_prev_close >= pe_pdvwap else "Put Seller"
 live_yesterday_text = f"Ce vwap ke upr/niche close: ce close = {ce_close_status} | pe close = {pe_close_status}"
 
 # --- 7. ALERT TRIGGER & SNAPSHOT ENGINE ---
@@ -407,4 +417,4 @@ with st.expander("🛠️ API Debug & Error Logs"):
         for log in debug_logs:
             st.error(log)
     else:
-        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Tuple mismatch fixed.")
+        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Daily VWAP & Labels Logic Fully Fixed.")
