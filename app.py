@@ -3,6 +3,7 @@ import pytz
 import pandas as pd
 import requests
 import streamlit as st
+import os
 from streamlit_autorefresh import st_autorefresh
 
 # --- TELEGRAM ALERT FUNCTION ---
@@ -17,7 +18,7 @@ def send_telegram_alert(message):
         pass
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Nifty Advanced Sniper Terminal", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Dhan Laxmi Apsra", page_icon="🪔", layout="wide")
 
 # AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga
 st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
@@ -31,15 +32,18 @@ if 'morning_msg_date' not in st.session_state:
     st.session_state.morning_msg_date = None
 
 if now_ist.hour >= 8 and st.session_state.morning_msg_date != today_date:
-    send_telegram_alert("🟢 *Nifty Sniper Terminal:* System Health Check - All systems OK, Tokens Active, Ready for Market!")
+    send_telegram_alert("🟢 *Dhan Laxmi Apsra:* System Health Check - All systems OK, Tokens Active, Ready for Market!")
     st.session_state.morning_msg_date = today_date
 
-# HEADER WITH LIVE AUTO-REFRESH TIMESTAMP
-col_h1, col_h2 = st.columns([3, 1])
-with col_h1:
-    st.title("⚡ Nifty Advanced Sniper Terminal")
-with col_h2:
-    st.caption(f"⏰ **Last Refreshed:** {now_ist.strftime('%H:%M:%S IST')}")
+# --- HEADER WITH LOGO & TITLE ---
+col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
+with col_logo2:
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=220)
+    st.markdown("<h1 style='text-align: center;'>🪔 Dhan Laxmi Apsra</h1>", unsafe_allow_html=True)
+    st.caption(f"<p style='text-align: center;'>⏰ <b>Last Refreshed:</b> {now_ist.strftime('%H:%M:%S IST')}</p>", unsafe_allow_html=True)
+
+st.markdown("---")
 
 # --- 1. FETCH SECRETS ---
 try:
@@ -70,7 +74,7 @@ if 'alert_triggered' not in st.session_state:
 
 debug_logs = []
 
-# --- 2. DHAN API HELPERS (EXACT VWAP & HISTORICAL DATA FIX) ---
+# --- 2. DHAN API HELPERS (EXACT VWAP & HISTORICAL DATA) ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
     try:
         from_date = (today_date - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
@@ -106,7 +110,7 @@ def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3
         df["datetime"] = pd.to_datetime(df["epoch"], unit="s", utc=True).dt.tz_convert("Asia/Kolkata")
         df["date"] = df["datetime"].dt.date
 
-        # Per-day VWAP Calculation Logic to match Dhan Chart exactly
+        # Per-day VWAP Calculation Logic
         def calc_vwap(day_df):
             if day_df.empty:
                 return day_df
@@ -233,16 +237,13 @@ if pe_sec_id:
 else:
     pe_price = pe_intra_vwap = pe_pdvwap = pe_open = pe_high = pe_low = pe_close = pe_prev_close = 0
 
-# --- 4. EXACT LABELS DEFINITION (STRICT COMPARISON FIX) ---
-# Spot Labels
+# --- 4. EXACT LABELS DEFINITION ---
 spot_old_bias = "Old Bias Bullish" if spot_price >= spot_pdvwap else "Old Bias Bearish"
 spot_new_bias = "New Bias Bullish" if spot_price >= spot_intra_vwap else "New Bias Bearish"
 
-# CE Labels
 ce_old_label = "Old Call Buyer" if ce_price >= ce_pdvwap else "Old Call Seller"
 ce_new_label = "New Call Buyer" if ce_price >= ce_intra_vwap else "New Call Seller"
 
-# PE Labels
 pe_old_label = "Old Put Buyer" if pe_price >= pe_pdvwap else "Old Put Seller"
 pe_new_label = "New Put Buyer" if pe_price >= pe_intra_vwap else "New Put Seller"
 
@@ -417,4 +418,4 @@ with st.expander("🛠️ API Debug & Error Logs"):
         for log in debug_logs:
             st.error(log)
     else:
-        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Daily VWAP & Labels Logic Fully Fixed.")
+        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Dhan Laxmi Apsra Header Active.")
