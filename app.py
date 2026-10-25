@@ -36,18 +36,14 @@ if now_ist.hour >= 8 and st.session_state.morning_msg_date != today_date:
     st.session_state.morning_msg_date = today_date
 
 # --- CENTER ALIGNED HEADER WITH LOGO & TITLE ---
-if os.path.exists("logo.png"):
-    st.markdown(
-        """
-        <div style="display: flex; justify-content: center; align-items: center; flex-direction: column;">
-            <img src="app/static/logo.png" width="240" style="margin-bottom: 10px;">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-st.markdown("<h1 style='text-align: center; margin-top: 0px;'>Dhan Laxmi Apsra</h1>", unsafe_allow_html=True)
-st.markdown(f"<p style='text-align: center;'>⏰ <b>Last Refreshed:</b> {now_ist.strftime('%H:%M:%S IST')}</p>", unsafe_allow_html=True)
+col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
+with col_c2:
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=220)
+    else:
+        st.warning("⚠️ logo.png file nahi mili! Kripya GitHub par logo.png upload karein.")
+    st.markdown("<h1 style='text-align: center; margin-top: 0px;'>Dhan Laxmi Apsra</h1>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align: center;'>⏰ <b>Last Refreshed:</b> {now_ist.strftime('%H:%M:%S IST')}</p>", unsafe_allow_html=True)
 
 st.markdown("---")
 
