@@ -18,7 +18,7 @@ def send_telegram_alert(message):
         pass
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Dhan Laxmi Apsra", page_icon="🪔", layout="wide")
+st.set_page_config(page_title="Dhan Laxmi Apsra", page_icon="📈", layout="wide")
 
 # AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga
 st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
@@ -35,13 +35,19 @@ if now_ist.hour >= 8 and st.session_state.morning_msg_date != today_date:
     send_telegram_alert("🟢 *Dhan Laxmi Apsra:* System Health Check - All systems OK, Tokens Active, Ready for Market!")
     st.session_state.morning_msg_date = today_date
 
-# --- HEADER WITH LOGO & TITLE ---
-col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
-with col_logo2:
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=220)
-    st.markdown("<h1 style='text-align: center;'>🪔 Dhan Laxmi Apsra</h1>", unsafe_allow_html=True)
-    st.caption(f"<p style='text-align: center;'>⏰ <b>Last Refreshed:</b> {now_ist.strftime('%H:%M:%S IST')}</p>", unsafe_allow_html=True)
+# --- CENTER ALIGNED HEADER WITH LOGO & TITLE ---
+if os.path.exists("logo.png"):
+    st.markdown(
+        """
+        <div style="display: flex; justify-content: center; align-items: center; flex-direction: column;">
+            <img src="app/static/logo.png" width="240" style="margin-bottom: 10px;">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.markdown("<h1 style='text-align: center; margin-top: 0px;'>Dhan Laxmi Apsra</h1>", unsafe_allow_html=True)
+st.markdown(f"<p style='text-align: center;'>⏰ <b>Last Refreshed:</b> {now_ist.strftime('%H:%M:%S IST')}</p>", unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -74,7 +80,7 @@ if 'alert_triggered' not in st.session_state:
 
 debug_logs = []
 
-# --- 2. DHAN API HELPERS (EXACT VWAP & HISTORICAL DATA) ---
+# --- 2. DHAN API HELPERS ---
 def get_dhan_history(security_id, exchange_segment, instrument_type, interval="3"):
     try:
         from_date = (today_date - datetime.timedelta(days=10)).strftime("%Y-%m-%d")
@@ -211,7 +217,7 @@ def get_atm_option_keys_cached(atm_strike, token, client_id):
 def get_atm_option_keys(atm_strike):
     return get_atm_option_keys_cached(atm_strike, ACCESS_TOKEN, CLIENT_ID)
 
-# --- 3. FETCH LIVE MARKET DATA (3-MIN INTERVAL) ---
+# --- 3. FETCH LIVE MARKET DATA ---
 spot_price, spot_intra_vwap, spot_pdvwap, _, _, _, _, spot_open_price, spot_prev_close, spot_prev_last_vwap, spot_today_first_vwap, status_spot = get_dhan_history("13", "IDX_I", "INDEX", interval="3")
 
 if status_spot != "OK":
@@ -247,7 +253,7 @@ ce_new_label = "New Call Buyer" if ce_price >= ce_intra_vwap else "New Call Sell
 pe_old_label = "Old Put Buyer" if pe_price >= pe_pdvwap else "Old Put Seller"
 pe_new_label = "New Put Buyer" if pe_price >= pe_intra_vwap else "New Put Seller"
 
-# --- 5. CORE CONDITIONS CHECK (6 CONDITIONS FOR CE & PE) ---
+# --- 5. CORE CONDITIONS CHECK ---
 spot_c1 = spot_price >= spot_pdvwap
 spot_c2 = spot_price >= spot_intra_vwap
 pe_c3 = pe_price < pe_pdvwap
@@ -418,4 +424,4 @@ with st.expander("🛠️ API Debug & Error Logs"):
         for log in debug_logs:
             st.error(log)
     else:
-        st.success("✅ Sabhi API Calls perfectly work kar rahe hain! Dhan Laxmi Apsra Header Active.")
+        st.success("✅ Sabhi API Calls perfectly work kar rahe hain!")
