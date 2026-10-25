@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 import streamlit as st
 import os
+import base64
 from streamlit_autorefresh import st_autorefresh
 
 # --- TELEGRAM ALERT FUNCTION ---
@@ -35,16 +36,32 @@ if now_ist.hour >= 8 and st.session_state.morning_msg_date != today_date:
     send_telegram_alert("🟢 *Dhan Laxmi Apsra:* System Health Check - All systems OK, Tokens Active, Ready for Market!")
     st.session_state.morning_msg_date = today_date
 
-# --- CENTER ALIGNED HEADER WITH LOGO & TITLE ---
-col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
-with col_c2:
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=220)
-    else:
-        st.warning("⚠️ logo.png file nahi mili! Kripya GitHub par logo.png upload karein.")
-    st.markdown("<h1 style='text-align: center; margin-top: 0px;'>Dhan Laxmi Apsra</h1>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align: center;'>⏰ <b>Last Refreshed:</b> {now_ist.strftime('%H:%M:%S IST')}</p>", unsafe_allow_html=True)
+# --- 100% PERFECT CENTER ALIGNED HEADER WITH HTML/CSS ---
+def get_base64_image(image_path):
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    return ""
 
+img_base64 = get_base64_image("logo.png")
+
+if img_base64:
+    header_html = f"""
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; width: 100%; margin-bottom: 20px;">
+        <img src="data:image/png;base64,{img_base64}" width="220" style="display: block; margin: 0 auto 10px auto;">
+        <h1 style="margin: 0; padding: 0; text-align: center;">Dhan Laxmi Apsra</h1>
+        <p style="margin: 5px 0 0 0; text-align: center;">⏰ <b>Last Refreshed:</b> {now_ist.strftime('%H:%M:%S IST')}</p>
+    </div>
+    """
+else:
+    header_html = f"""
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; width: 100%; margin-bottom: 20px;">
+        <h1 style="margin: 0; padding: 0; text-align: center;">Dhan Laxmi Apsra</h1>
+        <p style="margin: 5px 0 0 0; text-align: center;">⏰ <b>Last Refreshed:</b> {now_ist.strftime('%H:%M:%S IST')}</p>
+    </div>
+    """
+
+st.markdown(header_html, unsafe_allow_html=True)
 st.markdown("---")
 
 # --- 1. FETCH SECRETS ---
