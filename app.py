@@ -19,7 +19,7 @@ def send_telegram_alert(message):
         pass
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Dhan Laxmi Apsra", page_icon="📈", layout="wide")
+st.set_page_config(page_title="DHAN LAXMI APSARA", page_icon="📈", layout="wide")
 
 # AUTO REFRESH: Har 3000 ms (3 Second) me live data refresh hoga
 st_autorefresh(interval=3000, key="dhan_sniper_autorefresh")
@@ -331,7 +331,7 @@ df_live_vertical = df_live.set_index("Component").T
 
 ce_close_status = "Call Buyer" if ce_prev_close >= ce_pdvwap else "Call seller"
 pe_close_status = "Put Buyer" if pe_prev_close >= pe_pdvwap else "Put Seller"
-live_yesterday_text = f"Ce vwap ke upr/niche close: ce close = {ce_close_status} | pe close = {pe_close_status}"
+live_yesterday_text = f"Ce close = {ce_close_status} | Pe close = {pe_close_status}"
 
 # --- 7. ALERT TRIGGER & SNAPSHOT ENGINE ---
 if not st.session_state.alert_triggered and spot_price > 0:
@@ -370,7 +370,7 @@ if st.session_state.alert_triggered:
     st.markdown(f"**Pain Status:** `{st.session_state.pain_status}`")
     st.markdown(f"**{st.session_state.yesterday_status_text}**")
 else:
-    st.info("⏳ Waiting for Market Alert... Jab condition match hogi tab snapshot yahan freeze ho jayega.")
+    st.info("⏳ Waiting for Market Alert... Freeze Table when condition's are matched.")
 
 # --- 9. AUTO-TRADE LOGGER & EXPORT ---
 BUFFER = 2.0
@@ -428,7 +428,7 @@ if st.session_state.trades:
         mime="text/csv"
     )
 else:
-    st.write("⏳ Abhi tak koi trade lagaya nahi gaya hai...")
+    st.write("⏳ No Trades Activate yet...")
 
 # --- 10. DEBUG & ERROR LOG PANEL ---
 st.markdown("---")
